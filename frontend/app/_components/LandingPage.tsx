@@ -2,420 +2,479 @@
 
 import { useState, useEffect, useRef } from 'react';
 
-interface Tilt {
-  x: number;
-  y: number;
+/* ─────────────────────────────────────────────────────────────────
+   Shared sub-components
+───────────────────────────────────────────────────────────────── */
+function LogoMark({ size = 26 }: { size?: number }) {
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: size * 0.31,
+      background: 'linear-gradient(135deg,#2775CA,#1B5FA8)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      boxShadow: '0 4px 14px rgba(39,117,202,0.35)', flexShrink: 0,
+    }}>
+      <div style={{ width: size * 0.42, height: size * 0.42, borderRadius: size * 0.12, background: '#fff', opacity: 0.92 }} />
+    </div>
+  );
 }
 
+function HowSteps({ steps, dark }: { steps: { n: string; title: string; desc: string }[]; dark: boolean }) {
+  const numBg    = dark ? 'rgba(39,117,202,0.18)' : '#EAF2FC';
+  const numBd    = dark ? '1px solid rgba(39,117,202,0.35)' : '1px solid rgba(39,117,202,0.18)';
+  const numColor = dark ? '#6cb0f5' : '#2775CA';
+  const titleC   = dark ? '#fff'    : '#0B1B33';
+  const descC    = dark ? '#9fb3cc' : '#5B6B82';
+  const arrowC   = dark ? 'rgba(255,255,255,0.28)' : '#C2D2E6';
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'stretch' }}>
+      {steps.map((s, i) => (
+        <div key={s.n} style={{ display: 'flex', alignItems: 'stretch', flex: i < steps.length - 1 ? 1 : undefined }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ width: 44, height: 44, borderRadius: 12, background: numBg, border: numBd, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'JetBrains Mono',monospace", fontWeight: 700, fontSize: 15, color: numColor }}>
+              {s.n}
+            </div>
+            <div style={{ fontSize: 16, fontWeight: 700, letterSpacing: '-0.01em', marginTop: 14, color: titleC }}>{s.title}</div>
+            <div style={{ fontSize: 13.5, color: descC, lineHeight: 1.5, marginTop: 4 }}>{s.desc}</div>
+          </div>
+          {i < steps.length - 1 && (
+            <div style={{ display: 'flex', alignItems: 'center', padding: '0 16px', color: arrowC, fontSize: 22, paddingBottom: 30 }}>→</div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   Landing page
+───────────────────────────────────────────────────────────────── */
 export default function LandingPage() {
-  const [tilt, setTilt] = useState<Tilt>({ x: 0, y: 0 });
   const [copied, setCopied] = useState(false);
-  const [scrollY, setScrollY] = useState(0);
-  const heroRef = useRef<HTMLElement>(null);
 
-  useEffect(() => {
-    const onScroll = () => setScrollY(window.scrollY);
-    window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
-  }, []);
+  const motionRef  = useRef<HTMLDivElement>(null);
+  const cardRef    = useRef<HTMLDivElement>(null);
+  const gridRef    = useRef<HTMLDivElement>(null);
+  const glowRef    = useRef<HTMLDivElement>(null);
+  const ctaGlowRef = useRef<HTMLDivElement>(null);
 
+  /* ── Scroll-reveal ── */
   useEffect(() => {
     const io = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((e) => {
-          if (e.isIntersecting) e.target.classList.add('xp-revealed');
-        });
-      },
-      { threshold: 0.12, rootMargin: '0px 0px -40px 0px' }
+      (entries) => entries.forEach((e) => { if (e.isIntersecting) e.target.classList.add('xp-revealed'); }),
+      { threshold: 0.1, rootMargin: '0px 0px -50px 0px' },
     );
     document.querySelectorAll('.xp-reveal').forEach((el) => io.observe(el));
     return () => io.disconnect();
   }, []);
 
+  /* ── RAF: card bob/tilt + parallax ── */
+  useEffect(() => {
+    let raf: number;
+    let scrollTarget = window.scrollY;
+    let scrollCur    = scrollTarget;
+    const t0 = performance.now();
+    const bases = new Map<HTMLElement, number>();
+    const getBase = (el: HTMLElement) => {
+      if (!bases.has(el)) bases.set(el, el.getBoundingClientRect().top + window.scrollY);
+      return bases.get(el)!;
+    };
+
+    const onScroll = () => { scrollTarget = window.scrollY; };
+    window.addEventListener('scroll', onScroll, { passive: true });
+
+    const loop = (t: number) => {
+      scrollCur += (scrollTarget - scrollCur) * 0.12;
+      const now = t - t0;
+      const mid = scrollCur + window.innerHeight / 2;
+
+      if (gridRef.current)    gridRef.current.style.transform    = `translate3d(0,${((getBase(gridRef.current)    - mid) *  0.05).toFixed(2)}px,0)`;
+      if (glowRef.current)    glowRef.current.style.transform    = `translate3d(0,${((getBase(glowRef.current)    - mid) * -0.13).toFixed(2)}px,0)`;
+      if (ctaGlowRef.current) ctaGlowRef.current.style.transform = `translate3d(0,${((getBase(ctaGlowRef.current) - mid) *  0.07).toFixed(2)}px,0)`;
+
+      if (motionRef.current) {
+        const bob   = Math.sin(now / 950) * 7;
+        const drift = -scrollCur * 0.06;
+        const tilt  = Math.max(-9, -scrollCur * 0.013);
+        motionRef.current.style.transform = `translateY(${(bob + drift).toFixed(2)}px) rotateX(${tilt.toFixed(2)}deg)`;
+      }
+
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => { cancelAnimationFrame(raf); window.removeEventListener('scroll', onScroll); };
+  }, []);
+
+  /* ── Card mouse-tilt ── */
   const onCardMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    const r = e.currentTarget.getBoundingClientRect();
-    const x = (e.clientX - r.left) / r.width - 0.5;
-    const y = (e.clientY - r.top) / r.height - 0.5;
-    setTilt({ x: y * -22, y: x * 22 });
+    const el = cardRef.current; if (!el) return;
+    const r  = el.getBoundingClientRect();
+    const px = (e.clientX - r.left) / r.width  - 0.5;
+    const py = (e.clientY - r.top)  / r.height - 0.5;
+    el.style.transform = `rotateY(${(px * 18 - 4).toFixed(2)}deg) rotateX(${(-py * 16 + 3).toFixed(2)}deg)`;
+  };
+  const onCardLeave = () => {
+    if (cardRef.current) cardRef.current.style.transform = 'rotateY(-13deg) rotateX(7deg)';
   };
 
-  const onCardLeave = () => setTilt({ x: 0, y: 0 });
-
-  const copyCode = async () => {
-    await navigator.clipboard.writeText(
-      `app.use(xanpay.charge('/v1/infer', { price: '$0.0008' }))`
-    );
+  /* ── Copy code ── */
+  const copyCode = () => {
+    const code = `import { xanpay } from '@xanpay/sdk'\n\napp.use(xanpay.charge('/v1/infer', { price: '$0.0008' }))`;
+    navigator.clipboard.writeText(code).catch(() => {});
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setTimeout(() => setCopied(false), 1800);
   };
 
-  const parallaxStyle = {
-    transform: `translateY(${scrollY * 0.25}px)`,
-  };
-
+  /* ══════════════════════════════════════════════════════════════ */
   return (
-    <div className="bg-[#F4F7FB] text-[#0B1B33] font-sans overflow-x-hidden">
-      {/* ── Nav ──────────────────────────────────────────────────────── */}
-      <nav className="fixed inset-x-0 top-0 z-50 bg-[#F4F7FB]/90 backdrop-blur-md border-b border-[#0B1B33]/[0.08]">
-        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-          <a href="/" className="text-xl font-bold tracking-tight select-none">
-            Xan<span className="text-[#2775CA]">Pay</span>
-          </a>
+    <div style={{ fontFamily: "'Hanken Grotesk',sans-serif", background: '#F4F7FB', color: '#0B1B33', WebkitFontSmoothing: 'antialiased', overflowX: 'hidden' }}>
 
-          <div className="hidden md:flex items-center gap-8 text-sm font-medium text-[#0B1B33]/60">
-            <a href="#how-it-works" className="hover:text-[#2775CA] transition-colors">How it works</a>
-            <a href="#developers"   className="hover:text-[#2775CA] transition-colors">For developers</a>
-            <a href="#pricing"      className="hover:text-[#2775CA] transition-colors">Pricing</a>
-            <a href="#"             className="hover:text-[#2775CA] transition-colors">Docs</a>
+      {/* ══ NAV ═════════════════════════════════════════════════════ */}
+      <nav style={{ position: 'sticky', top: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 40px', background: 'rgba(244,247,251,0.72)', backdropFilter: 'blur(14px)', borderBottom: '1px solid rgba(11,27,51,0.07)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+          <LogoMark size={26} />
+          <span style={{ fontWeight: 800, fontSize: 19, letterSpacing: '-0.02em' }}>XanPay</span>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 34 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 28, fontSize: 14.5, fontWeight: 500, color: '#42546E' }}>
+            {['How it works', 'For developers', 'Pricing', 'Docs'].map((l) => (
+              <a key={l} href="#" style={{ color: 'inherit', textDecoration: 'none', cursor: 'pointer', transition: 'color .15s' }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = '#2775CA')}
+                onMouseLeave={(e) => (e.currentTarget.style.color = '#42546E')}
+              >{l}</a>
+            ))}
           </div>
-
-          <div className="flex items-center gap-3">
-            <a href="#" className="text-sm font-medium text-[#0B1B33]/60 hover:text-[#0B1B33] transition-colors hidden sm:block">
-              Sign in
-            </a>
-            <a href="#" className="bg-[#2775CA] text-white text-sm font-semibold px-4 py-2 rounded-full hover:bg-[#1d5fa8] transition-all hover:shadow-lg hover:shadow-[#2775CA]/30">
-              Get a XanCard
-            </a>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button style={{ fontFamily: 'inherit', fontSize: 14, fontWeight: 600, color: '#0B1B33', background: 'transparent', border: 'none', cursor: 'pointer', padding: '8px 6px' }}>Sign in</button>
+            <button style={{ fontFamily: 'inherit', fontSize: 14, fontWeight: 600, color: '#fff', background: '#0B1B33', border: 'none', borderRadius: 10, cursor: 'pointer', padding: '10px 18px' }}>Get a XanCard</button>
           </div>
         </div>
       </nav>
 
-      {/* ── Hero ─────────────────────────────────────────────────────── */}
-      <section ref={heroRef} className="relative min-h-screen flex items-center pt-16">
-        {/* Ambient blobs */}
-        <div className="absolute inset-0 pointer-events-none overflow-hidden" style={parallaxStyle}>
-          <div className="absolute top-1/4 left-1/3 w-80 h-80 bg-[#2775CA]/[0.12] rounded-full blur-3xl" />
-          <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-[#2775CA]/[0.07] rounded-full blur-3xl" />
-        </div>
+      {/* ══ HERO ════════════════════════════════════════════════════ */}
+      <section style={{ position: 'relative', padding: '72px 40px 40px', overflow: 'hidden' }}>
+        {/* Grid pattern */}
+        <div ref={gridRef} style={{ position: 'absolute', inset: '-80px 0 0', backgroundImage: 'linear-gradient(rgba(39,117,202,0.05) 1px,transparent 1px),linear-gradient(90deg,rgba(39,117,202,0.05) 1px,transparent 1px)', backgroundSize: '46px 46px', WebkitMaskImage: 'radial-gradient(circle at 70% 35%,#000 0%,transparent 70%)', maskImage: 'radial-gradient(circle at 70% 35%,#000 0%,transparent 70%)', pointerEvents: 'none', willChange: 'transform' }} />
+        {/* Glow blob */}
+        <div ref={glowRef} style={{ position: 'absolute', top: -120, right: '6%', width: 620, height: 620, borderRadius: '50%', background: 'radial-gradient(circle,rgba(39,117,202,0.22),transparent 65%)', filter: 'blur(20px)', pointerEvents: 'none', willChange: 'transform' }} />
 
-        <div className="max-w-6xl mx-auto px-6 py-28 grid md:grid-cols-2 gap-16 items-center relative">
-          {/* Copy */}
-          <div>
-            <div className="inline-flex items-center gap-2 bg-[#2775CA]/10 text-[#2775CA] text-xs font-semibold px-3 py-1.5 rounded-full mb-7">
-              <span
-                className="w-1.5 h-1.5 bg-[#2775CA] rounded-full"
-                style={{ animation: 'xp-pulse 2s ease-in-out infinite' }}
-              />
-              Powered by USDC on Base
+        <div style={{ position: 'relative', maxWidth: 1240, margin: '0 auto', display: 'grid', gridTemplateColumns: '1.02fr 1fr', gap: 48, alignItems: 'center' }}>
+
+          {/* ── Copy ── */}
+          <div className="xp-reveal">
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 9, padding: '7px 14px', borderRadius: 999, background: '#fff', border: '1px solid rgba(39,117,202,0.2)', fontSize: 13, fontWeight: 600, color: '#1B5FA8', boxShadow: '0 2px 10px rgba(39,117,202,0.06)' }}>
+              <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#2775CA', display: 'inline-block', animation: 'xp-pulse 1.8s infinite' }} />
+              Real-time nanopayments, settled in USDC
             </div>
 
-            <h1 className="text-5xl md:text-6xl font-bold leading-[1.08] tracking-tight text-[#0B1B33] mb-6">
-              One card.<br />
-              <span className="text-[#2775CA]">Charged by the</span><br />
-              millisecond.
+            <h1 style={{ fontSize: 62, lineHeight: 1.02, letterSpacing: '-0.035em', fontWeight: 800, margin: '24px 0 0' }}>
+              One card.<br />Charged by the<br /><span style={{ color: '#2775CA' }}>millisecond.</span>
             </h1>
 
-            <p className="text-lg text-[#0B1B33]/55 mb-9 leading-relaxed max-w-md">
-              XanPay lets you spend and earn in fractions of a cent — perfect for
-              AI APIs, streaming services, and any usage-based product.
+            <p style={{ fontSize: 19, lineHeight: 1.55, color: '#42546E', maxWidth: 480, margin: '22px 0 0', fontWeight: 400 }}>
+              XanPay turns a funded USDC wallet into a card you actually understand. Link it once, and platforms charge you in real time — per API call, per second, per query. No wallet. No seed phrase. Just a balance.
             </p>
 
-            <div className="flex flex-col sm:flex-row gap-3">
-              <a href="#" className="bg-[#2775CA] text-white font-semibold px-6 py-3.5 rounded-full hover:bg-[#1d5fa8] transition-all hover:shadow-xl hover:shadow-[#2775CA]/35 text-center">
-                Get your XanCard
-              </a>
-              <a href="#how-it-works" className="border border-[#0B1B33]/[0.18] text-[#0B1B33] font-semibold px-6 py-3.5 rounded-full hover:bg-[#0B1B33]/5 transition-colors text-center">
-                See how it works
-              </a>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 34 }}>
+              <button
+                style={{ fontFamily: 'inherit', fontSize: 15.5, fontWeight: 700, color: '#fff', background: '#2775CA', border: 'none', borderRadius: 12, cursor: 'pointer', padding: '15px 26px', boxShadow: '0 10px 26px rgba(39,117,202,0.34)', display: 'flex', alignItems: 'center', gap: 8, transition: 'transform .2s ease,box-shadow .2s ease' }}
+                onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 16px 34px rgba(39,117,202,0.46)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = '0 10px 26px rgba(39,117,202,0.34)'; }}
+              >
+                Link your XanCard <span style={{ fontSize: 17, lineHeight: 1 }}>→</span>
+              </button>
+              <button
+                style={{ fontFamily: 'inherit', fontSize: 15.5, fontWeight: 600, color: '#0B1B33', background: 'transparent', border: '1.5px solid rgba(11,27,51,0.18)', borderRadius: 12, cursor: 'pointer', padding: '15px 24px', transition: 'transform .2s ease,border-color .2s ease,background .2s ease' }}
+                onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.borderColor = '#2775CA'; e.currentTarget.style.background = '#fff'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.transform = ''; e.currentTarget.style.borderColor = 'rgba(11,27,51,0.18)'; e.currentTarget.style.background = 'transparent'; }}
+              >
+                Start charging — for developers
+              </button>
             </div>
 
             {/* Trust strip */}
-            <div className="mt-12 flex items-center gap-2 flex-wrap">
-              <span className="text-xs text-[#0B1B33]/35 font-medium mr-1">Built with</span>
-              {['Circle', 'USDC', 'x402', 'Arc'].map((p) => (
-                <span key={p} className="text-xs font-semibold px-3 py-1.5 bg-white border border-[#0B1B33]/10 rounded-full text-[#0B1B33]/50 shadow-sm">
-                  {p}
-                </span>
+            <div style={{ marginTop: 46 }}>
+              <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, letterSpacing: '0.16em', textTransform: 'uppercase', color: '#8194AC', marginBottom: 14 }}>Built on real infrastructure</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 26, flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: 700, fontSize: 16, color: '#56657D', letterSpacing: '-0.01em' }}>Circle</span>
+                <span style={{ width: 1, height: 16, background: 'rgba(11,27,51,0.12)', display: 'inline-block' }} />
+                <span style={{ fontWeight: 700, fontSize: 16, color: '#56657D', letterSpacing: '-0.01em' }}>Arc</span>
+                <span style={{ width: 1, height: 16, background: 'rgba(11,27,51,0.12)', display: 'inline-block' }} />
+                <span style={{ fontWeight: 700, fontSize: 16, color: '#56657D', letterSpacing: '-0.01em' }}>USDC</span>
+                <span style={{ width: 1, height: 16, background: 'rgba(11,27,51,0.12)', display: 'inline-block' }} />
+                <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 600, fontSize: 13, color: '#56657D', border: '1px solid rgba(11,27,51,0.14)', borderRadius: 6, padding: '4px 9px' }}>x402</span>
+              </div>
+            </div>
+          </div>
+
+          {/* ── Card ── */}
+          <div className="xp-reveal" style={{ perspective: 1400, display: 'flex', justifyContent: 'center', alignItems: 'center', position: 'relative' }}>
+            {/* Floating micro-charges */}
+            <div style={{ position: 'absolute', left: '50%', top: '50%', width: 500, height: 340, transform: 'translate(-50%,-50%)', pointerEvents: 'none', zIndex: 5 }}>
+              {[
+                { label: '− $0.0008 · api call',  pos: { left: '-4%', top: '6%'  }, delay: '0s'   },
+                { label: '− $0.0012 · inference', pos: { right: '-3%', top: '33%' }, delay: '1.6s' },
+                { label: '− $0.0003 · 1s stream', pos: { left: '3%',  top: '80%' }, delay: '3.2s' },
+              ].map(({ label, pos, delay }) => (
+                <div key={label} style={{ position: 'absolute', ...pos, fontFamily: "'JetBrains Mono',monospace", fontSize: 12.5, fontWeight: 700, color: '#1B5FA8', background: 'rgba(255,255,255,0.94)', border: '1px solid rgba(39,117,202,0.28)', borderRadius: 999, padding: '5px 11px', boxShadow: '0 8px 20px rgba(15,45,82,0.14)', whiteSpace: 'nowrap', opacity: 0, animation: `xp-rise 4.8s ${delay} ease-in-out infinite` }}>
+                  {label}
+                </div>
               ))}
             </div>
-          </div>
 
-          {/* 3D Card */}
-          <div className="relative flex items-center justify-center">
-            <div className="relative" style={{ perspective: '1200px' }}>
-              {/* Floating charge bubbles */}
-              <Bubble
-                label="-$0.0008"
-                dot="bg-emerald-400"
-                style={{ top: '-2rem', right: '-2rem', animation: 'xp-float 3s ease-in-out infinite' }}
-              />
-              <Bubble
-                label="-$0.0012"
-                dot="bg-blue-400"
-                style={{ bottom: '-1.5rem', left: '-2rem', animation: 'xp-float 3.5s ease-in-out infinite 0.6s' }}
-              />
-              <Bubble
-                label="-$0.0003"
-                dot="bg-violet-400"
-                style={{ top: '50%', right: '-3rem', transform: 'translateY(-50%)', animation: 'xp-float 4s ease-in-out infinite 1.2s' }}
-              />
-
-              {/* Card face */}
+            {/* motionRef: idle bob + scroll drift */}
+            <div ref={motionRef} style={{ transformStyle: 'preserve-3d', willChange: 'transform' }}>
+              {/* cardRef: mouse tilt */}
               <div
-                className="w-72 h-44 rounded-[1.4rem] cursor-pointer select-none"
+                ref={cardRef}
                 onMouseMove={onCardMove}
                 onMouseLeave={onCardLeave}
+                style={{ position: 'relative', width: 420, height: 262, borderRadius: 24, transform: 'rotateY(-13deg) rotateX(7deg)', transformStyle: 'preserve-3d', transition: 'transform 0.25s cubic-bezier(.2,.7,.3,1)', cursor: 'pointer', willChange: 'transform' }}
               >
-                <div
-                  className="w-full h-full rounded-[1.4rem] relative overflow-hidden shadow-2xl shadow-[#0B1B33]/40"
-                  style={{
-                    background: 'linear-gradient(135deg, #0B1B33 0%, #163058 55%, #2775CA 100%)',
-                    transform: `rotateX(${tilt.x}deg) rotateY(${tilt.y}deg)`,
-                    transition: 'transform 0.12s ease-out',
-                  }}
-                >
-                  {/* Sheen sweep */}
-                  <div className="absolute inset-0 overflow-hidden rounded-[1.4rem] pointer-events-none">
-                    <div
-                      className="absolute top-0 bottom-0 w-14 -skew-x-12"
-                      style={{
-                        background: 'linear-gradient(to right, transparent, rgba(255,255,255,0.28), transparent)',
-                        animation: 'xp-sheen 4s ease-in-out infinite 0.5s',
-                      }}
-                    />
+                {/* Glow behind */}
+                <div style={{ position: 'absolute', inset: -14, borderRadius: 30, background: 'radial-gradient(circle at 30% 30%,rgba(39,117,202,0.55),transparent 70%)', filter: 'blur(26px)', zIndex: -1, animation: 'xp-pulse 4s infinite' }} />
+
+                {/* Glass face */}
+                <div style={{ position: 'absolute', inset: 0, borderRadius: 24, background: 'linear-gradient(140deg,rgba(255,255,255,0.62),rgba(214,232,250,0.32) 48%,rgba(39,117,202,0.22))', backdropFilter: 'blur(14px)', border: '1px solid rgba(255,255,255,0.7)', boxShadow: '0 30px 70px rgba(15,45,82,0.32),inset 0 1px 1px rgba(255,255,255,0.9)', overflow: 'hidden' }}>
+                  {/* Sheen */}
+                  <div style={{ position: 'absolute', top: '-40%', left: 0, width: '55%', height: '180%', background: 'linear-gradient(105deg,transparent,rgba(255,255,255,0.55),transparent)', animation: 'xp-sheen 5.5s ease-in-out infinite', pointerEvents: 'none' }} />
+
+                  {/* USDC badge */}
+                  <div style={{ position: 'absolute', right: 26, top: 24, width: 46, height: 46, borderRadius: '50%', background: 'radial-gradient(circle at 40% 35%,#3a8ce0,#2775CA)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 22px rgba(39,117,202,0.7),inset 0 1px 2px rgba(255,255,255,0.6)' }}>
+                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 700, fontSize: 18, color: '#fff' }}>$</span>
                   </div>
 
-                  {/* Card content */}
-                  <div className="absolute inset-0 p-6 flex flex-col justify-between text-white">
-                    <div className="flex justify-between items-start">
-                      <span className="text-lg font-bold tracking-tight">XanPay</span>
-                      <span className="text-[10px] font-mono opacity-60 bg-white/10 px-2 py-0.5 rounded-full">USDC</span>
+                  <div style={{ position: 'relative', padding: '26px 28px', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ width: 18, height: 18, borderRadius: 5, background: 'linear-gradient(135deg,#2775CA,#1B5FA8)' }} />
+                        <span style={{ fontWeight: 800, fontSize: 16, letterSpacing: '-0.02em', color: '#0B1B33' }}>XanCard</span>
+                      </div>
+                      {/* EMV chip */}
+                      <div style={{ width: 42, height: 31, borderRadius: 7, marginTop: 22, background: 'linear-gradient(135deg,#d9b24a,#f1d98a 45%,#c79a35)', boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.4)', position: 'relative' }}>
+                        <div style={{ position: 'absolute', inset: 6, border: '1px solid rgba(120,90,20,0.35)', borderRadius: 3 }} />
+                      </div>
                     </div>
 
-                    {/* EMV chip */}
-                    <div className="absolute left-6 top-1/2 -translate-y-1/2 w-8 h-6 rounded-sm bg-gradient-to-br from-yellow-300/80 to-yellow-400/60 opacity-70" />
-
                     <div>
-                      <div className="text-sm font-mono opacity-40 mb-1 tracking-widest">•••• •••• •••• 4291</div>
-                      <div className="text-[10px] font-semibold uppercase tracking-wider opacity-50">XanCard Holder</div>
+                      <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, letterSpacing: '0.12em', color: '#3a5074', opacity: 0.72 }}>CARD ID</div>
+                      <div style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 600, fontSize: 18, letterSpacing: '0.06em', color: '#0B1B33', marginTop: 3 }}>•••• •••• •••• 4820</div>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between' }}>
+                      <div>
+                        <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, letterSpacing: '0.12em', color: '#3a5074', opacity: 0.72 }}>BALANCE</div>
+                        <div style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 700, fontSize: 26, letterSpacing: '-0.01em', color: '#0B1B33', marginTop: 2 }}>
+                          $1,284.00 <span style={{ fontSize: 13, color: '#2775CA' }}>USDC</span>
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right', fontFamily: "'JetBrains Mono',monospace", fontSize: 11, lineHeight: 1.5, color: '#3a5074' }}>
+                        <div style={{ fontWeight: 600, color: '#1B5FA8' }}>ARC</div>
+                        <div style={{ opacity: 0.7 }}>via Circle</div>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
-
-              {/* Glow beneath card */}
-              <div className="absolute inset-x-8 bottom-0 h-8 bg-[#2775CA]/30 blur-2xl rounded-full -z-10" />
             </div>
           </div>
         </div>
       </section>
 
-      {/* ── How it works ─────────────────────────────────────────────── */}
-      <section id="how-it-works" className="py-28 bg-white">
-        <div className="max-w-6xl mx-auto px-6">
-          <div className="text-center mb-16 xp-reveal">
-            <h2 className="text-4xl font-bold text-[#0B1B33] mb-3">How it works</h2>
-            <p className="text-[#0B1B33]/55 text-lg">Simple for users. Powerful for developers.</p>
+      {/* ══ HOW IT WORKS ════════════════════════════════════════════ */}
+      <section style={{ padding: '78px 40px 0' }}>
+        <div className="xp-reveal" style={{ maxWidth: 760, margin: '0 auto', textAlign: 'center' }}>
+          <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12, letterSpacing: '0.16em', textTransform: 'uppercase', color: '#2775CA', fontWeight: 600 }}>How it works</div>
+          <h2 style={{ fontSize: 42, lineHeight: 1.08, letterSpacing: '-0.03em', fontWeight: 800, margin: '14px 0 0' }}>Link your card. Get charged in real time.</h2>
+          <p style={{ fontSize: 17.5, color: '#42546E', lineHeight: 1.55, margin: '16px auto 0', maxWidth: 560 }}>Two sides of the same standard — users fund a card, developers charge it. Circle batches and settles the rest in USDC.</p>
+        </div>
+
+        <div style={{ maxWidth: 1180, margin: '48px auto 0', display: 'flex', flexDirection: 'column', gap: 26 }}>
+          {/* Users */}
+          <div className="xp-reveal" style={{ background: '#fff', border: '1px solid rgba(11,27,51,0.08)', borderRadius: 24, padding: '38px 40px', boxShadow: '0 18px 46px rgba(15,45,82,0.08)', display: 'grid', gridTemplateColumns: '286px 1fr', gap: 46, alignItems: 'center' }}>
+            <div>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 13px', borderRadius: 999, background: '#EAF2FC', color: '#1B5FA8', fontSize: 13, fontWeight: 700 }}>For users</div>
+              <h3 style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-0.02em', margin: '16px 0 6px' }}>Get a card. Spend like one.</h3>
+              <p style={{ fontSize: 14.5, color: '#5B6B82', margin: 0, lineHeight: 1.55 }}>Deposit USDC once. Circle MPC holds the keys — you never touch a wallet.</p>
+            </div>
+            <HowSteps dark={false} steps={[
+              { n: '01', title: 'Sign up',             desc: "Email and you're in. No exchange, no extension." },
+              { n: '02', title: 'Fund your card',       desc: 'Deposit USDC once, secured by Circle MPC.' },
+              { n: '03', title: 'Link to a platform',   desc: 'Connect the card and pay only for what you use.' },
+            ]} />
           </div>
 
-          <div className="grid md:grid-cols-2 gap-6">
-            {/* Users panel */}
-            <div className="bg-[#F4F7FB] rounded-3xl p-8 xp-reveal">
-              <div className="text-[10px] font-bold text-[#2775CA] uppercase tracking-[0.15em] mb-7">For users</div>
-              <div className="space-y-7">
-                {[
-                  { n: '01', title: 'Sign up',       desc: 'Create your account in seconds — just an email.' },
-                  { n: '02', title: 'Fund your card', desc: 'Deposit USDC to your XanCard. No bank account needed.' },
-                  { n: '03', title: 'Link & pay',     desc: 'Connect to any XanPay-enabled service and pay by the millisecond.' },
-                ].map((s) => (
-                  <div key={s.n} className="flex gap-4">
-                    <span className="text-[10px] font-mono font-bold text-[#2775CA]/40 w-6 shrink-0 pt-0.5">{s.n}</span>
-                    <div>
-                      <div className="font-semibold text-[#0B1B33] mb-1">{s.title}</div>
-                      <div className="text-sm text-[#0B1B33]/55 leading-relaxed">{s.desc}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+          {/* Developers */}
+          <div className="xp-reveal" style={{ background: '#0B1B33', borderRadius: 24, padding: '38px 40px', boxShadow: '0 18px 46px rgba(15,45,82,0.16)', position: 'relative', overflow: 'hidden', display: 'grid', gridTemplateColumns: '286px 1fr', gap: 46, alignItems: 'center' }}>
+            <div style={{ position: 'absolute', top: -90, right: -50, width: 320, height: 320, borderRadius: '50%', background: 'radial-gradient(circle,rgba(39,117,202,0.32),transparent 70%)', pointerEvents: 'none' }} />
+            <div style={{ position: 'relative' }}>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 13px', borderRadius: 999, background: 'rgba(39,117,202,0.22)', color: '#9cc6f3', fontSize: 13, fontWeight: 700 }}>For developers</div>
+              <h3 style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-0.02em', margin: '16px 0 6px', color: '#fff' }}>Protect a route. Get paid per call.</h3>
+              <p style={{ fontSize: 14.5, color: '#9fb3cc', margin: 0, lineHeight: 1.55 }}>Drop in the SDK. Settlements accumulate in USDC on Arc.</p>
             </div>
-
-            {/* Developers panel */}
-            <div id="developers" className="bg-[#0B1B33] rounded-3xl p-8 xp-reveal">
-              <div className="text-[10px] font-bold text-[#2775CA] uppercase tracking-[0.15em] mb-7">For developers</div>
-              <div className="space-y-7">
-                {[
-                  { n: '01', title: 'Install SDK',     desc: 'npm install @xanpay/sdk — one command to get started.' },
-                  { n: '02', title: 'Protect a route', desc: 'Wrap any endpoint with xanpay.charge() and set your price.' },
-                  { n: '03', title: 'Earn per call',   desc: 'Receive USDC for every request — automatically, in real time.' },
-                ].map((s) => (
-                  <div key={s.n} className="flex gap-4">
-                    <span className="text-[10px] font-mono font-bold text-[#2775CA]/50 w-6 shrink-0 pt-0.5">{s.n}</span>
-                    <div>
-                      <div className="font-semibold text-white mb-1">{s.title}</div>
-                      <div className="text-sm text-white/45 leading-relaxed">{s.desc}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <HowSteps dark={true} steps={[
+              { n: '01', title: 'Install the SDK',  desc: 'One package. Works with Express, Next, or Hono.' },
+              { n: '02', title: 'Protect a route',  desc: 'Wrap an endpoint with a price. One line.' },
+              { n: '03', title: 'Earn per call',    desc: 'Charges settle to USDC on Arc, batched by Circle.' },
+            ]} />
           </div>
         </div>
       </section>
 
-      {/* ── Use cases / Pricing ──────────────────────────────────────── */}
-      <section id="pricing" className="py-28 bg-[#F4F7FB]">
-        <div className="max-w-6xl mx-auto px-6">
-          <div className="text-center mb-16 xp-reveal">
-            <h2 className="text-4xl font-bold text-[#0B1B33] mb-3">Pay only for what you use</h2>
-            <p className="text-[#0B1B33]/55 text-lg">Micro-payments that make sense at scale.</p>
-          </div>
+      {/* ══ USE CASES ════════════════════════════════════════════════ */}
+      <section style={{ padding: '88px 40px 0' }}>
+        <div className="xp-reveal" style={{ maxWidth: 760, margin: '0 auto', textAlign: 'center' }}>
+          <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12, letterSpacing: '0.16em', textTransform: 'uppercase', color: '#2775CA', fontWeight: 600 }}>Use cases</div>
+          <h2 style={{ fontSize: 42, lineHeight: 1.08, letterSpacing: '-0.03em', fontWeight: 800, margin: '14px 0 0' }}>Charge for exactly what&apos;s used</h2>
+          <p style={{ fontSize: 17.5, color: '#42546E', lineHeight: 1.55, margin: '16px auto 0', maxWidth: 560 }}>Three ways to meter value — each settled in USDC and batched by Circle, viable down to a hundredth of a cent.</p>
+        </div>
 
-          <div className="grid md:grid-cols-3 gap-6">
-            {[
-              {
-                price: '$0.0008', unit: '/action',
-                title: 'Pay per action',
-                desc: 'Every click, search, or API call billed exactly as it happens.',
-              },
-              {
-                price: '$0.0012', unit: '/run',
-                title: 'Pay per inference',
-                desc: 'AI model calls charged per inference — no monthly seats required.',
-              },
-              {
-                price: '$0.0003', unit: '/sec',
-                title: 'Pay per second',
-                desc: 'Stream video, audio, or data and pay only for what you consume.',
-              },
-            ].map((c, i) => (
+        <div style={{ maxWidth: 1180, margin: '48px auto 0', display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 24 }}>
+          {[
+            { icon: 'fn()', price: '$0.0008 / action', title: 'Pay per action',    desc: "Bill a single API request, a database write, an automation run, or an agent's tool call — one signature each.",    tags: ['API platforms', 'Automation', 'AI agents'] },
+            { icon: 'ai',   price: '$0.0012 / run',    title: 'Pay per inference', desc: 'Charge each model call — text, image, or audio. Costs track real usage instead of flat subscriptions.',            tags: ['AI assistants', 'Image generation', 'Transcription'] },
+            { icon: '0:01', price: '$0.0003 / sec',    title: 'Pay per second',    desc: 'Meter time consumed — seconds watched, streamed, or computed. Charging stops the instant they do.',                tags: ['Video & music streaming', 'Live audio', 'Cloud compute'] },
+          ].map((c) => (
+            <div key={c.title} className="xp-reveal">
               <div
-                key={i}
-                className="bg-white rounded-3xl p-8 border border-[#0B1B33]/[0.06] hover:border-[#2775CA]/30 hover:shadow-2xl hover:shadow-[#2775CA]/10 transition-all duration-300 xp-reveal group"
+                style={{ height: '100%', background: '#fff', border: '1px solid rgba(11,27,51,0.08)', borderRadius: 20, padding: '30px 28px', boxShadow: '0 12px 30px rgba(15,45,82,0.06)', transition: 'transform .26s cubic-bezier(.2,.7,.3,1),box-shadow .26s ease' }}
+                onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-7px)'; e.currentTarget.style.boxShadow = '0 26px 52px rgba(15,45,82,0.14)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = '0 12px 30px rgba(15,45,82,0.06)'; }}
               >
-                <div className="flex items-baseline gap-1 mb-3">
-                  <span className="text-3xl font-bold font-mono text-[#0B1B33] group-hover:text-[#2775CA] transition-colors">{c.price}</span>
-                  <span className="text-sm text-[#0B1B33]/35 font-mono">{c.unit}</span>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ width: 48, height: 48, borderRadius: 13, background: '#EAF2FC', border: '1px solid rgba(39,117,202,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'JetBrains Mono',monospace", fontWeight: 700, fontSize: 14, color: '#2775CA' }}>{c.icon}</div>
+                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12.5, fontWeight: 700, color: '#1B5FA8', background: '#EAF2FC', borderRadius: 999, padding: '6px 12px' }}>{c.price}</div>
                 </div>
-                <div className="font-semibold text-[#0B1B33] mb-2">{c.title}</div>
-                <div className="text-sm text-[#0B1B33]/55 leading-relaxed">{c.desc}</div>
+                <h3 style={{ fontSize: 21, fontWeight: 800, letterSpacing: '-0.02em', margin: '22px 0 6px' }}>{c.title}</h3>
+                <p style={{ fontSize: 14.5, color: '#5B6B82', lineHeight: 1.55, margin: '0 0 20px' }}>{c.desc}</p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {c.tags.map((tag) => (
+                    <span key={tag} style={{ fontSize: 12.5, fontWeight: 600, color: '#42546E', background: '#F1F5FA', border: '1px solid rgba(11,27,51,0.07)', borderRadius: 8, padding: '5px 10px', whiteSpace: 'nowrap' }}>{tag}</span>
+                  ))}
+                </div>
               </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ══ CODE BLOCK ══════════════════════════════════════════════ */}
+      <section style={{ padding: '80px 40px 0' }}>
+        <div style={{ maxWidth: 1180, margin: '0 auto', display: 'grid', gridTemplateColumns: '0.92fr 1.08fr', gap: 48, alignItems: 'center' }}>
+          <div className="xp-reveal">
+            <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12, letterSpacing: '0.16em', textTransform: 'uppercase', color: '#2775CA', fontWeight: 600 }}>Three lines</div>
+            <h2 style={{ fontSize: 38, lineHeight: 1.1, letterSpacing: '-0.03em', fontWeight: 800, margin: '14px 0 0' }}>Charge for usage<br />in real time.</h2>
+            <p style={{ fontSize: 16.5, color: '#42546E', lineHeight: 1.55, margin: '18px 0 0', maxWidth: 420 }}>
+              Wrap any route. Each request carries an{' '}
+              <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 14.5, color: '#1B5FA8', background: '#EAF2FC', padding: '1px 6px', borderRadius: 5 }}>EIP-3009</span>
+              {' '}signature — an offchain authorization, not a transaction. Circle batches thousands and settles in bulk, so sub-cent charges finally pencil out.
+            </p>
+            <div style={{ display: 'flex', gap: 30, marginTop: 30 }}>
+              <div>
+                <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 30, fontWeight: 700, color: '#0B1B33' }}>$0.0001</div>
+                <div style={{ fontSize: 13.5, color: '#5B6B82', marginTop: 2 }}>minimum viable charge</div>
+              </div>
+              <div style={{ width: 1, background: 'rgba(11,27,51,0.1)' }} />
+              <div>
+                <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 30, fontWeight: 700, color: '#0B1B33' }}>0&nbsp;gas</div>
+                <div style={{ fontSize: 13.5, color: '#5B6B82', marginTop: 2 }}>per individual charge</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Editor chrome */}
+          <div className="xp-reveal" style={{ borderRadius: 16, overflow: 'hidden', boxShadow: '0 30px 70px rgba(15,45,82,0.28)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '13px 18px', background: '#0a1526', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#ff5f57', display: 'inline-block' }} />
+                <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#febc2e', display: 'inline-block' }} />
+                <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#28c840', display: 'inline-block' }} />
+                <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12.5, color: '#7e93ad', marginLeft: 10 }}>server.ts</span>
+              </div>
+              <button
+                onClick={copyCode}
+                style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12, fontWeight: 600, color: copied ? '#3ddc97' : '#9cc6f3', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 7, padding: '6px 12px', cursor: 'pointer', transition: 'color .2s' }}
+              >
+                {copied ? 'Copied ✓' : 'Copy'}
+              </button>
+            </div>
+            <pre style={{ margin: 0, padding: '24px 22px', background: '#0c1830', fontFamily: "'JetBrains Mono',monospace", fontSize: 14.5, lineHeight: 1.85, overflowX: 'auto' }}>
+              <code>
+                <span style={{ color: '#5d7a9e' }}>{'// install: npm i @xanpay/sdk'}</span>{'\n'}
+                <span style={{ color: '#c792ea' }}>import</span>
+                <span style={{ color: '#e6edf3' }}>{' { xanpay } '}</span>
+                <span style={{ color: '#c792ea' }}>from</span>
+                <span style={{ color: '#9ece6a' }}>{" '@xanpay/sdk'"}</span>
+                {'\n\n'}
+                <span style={{ color: '#7aa2f7' }}>app</span>
+                <span style={{ color: '#e6edf3' }}>.</span>
+                <span style={{ color: '#7dcfff' }}>use</span>
+                <span style={{ color: '#e6edf3' }}>(</span>
+                <span style={{ color: '#7aa2f7' }}>xanpay</span>
+                <span style={{ color: '#e6edf3' }}>.</span>
+                <span style={{ color: '#7dcfff' }}>charge</span>
+                <span style={{ color: '#e6edf3' }}>(</span>
+                <span style={{ color: '#9ece6a' }}>{`'/v1/infer'`}</span>
+                <span style={{ color: '#e6edf3' }}>{', { '}</span>
+                <span style={{ color: '#bb9af7' }}>price</span>
+                <span style={{ color: '#e6edf3' }}>: </span>
+                <span style={{ color: '#ff9e64' }}>{`'$0.0008'`}</span>
+                <span style={{ color: '#e6edf3' }}>{' }))' }</span>
+              </code>
+            </pre>
+          </div>
+        </div>
+      </section>
+
+      {/* ══ FINAL CTA ═══════════════════════════════════════════════ */}
+      <section style={{ padding: '96px 40px 90px' }}>
+        <div className="xp-reveal" style={{ position: 'relative', maxWidth: 1180, margin: '0 auto', borderRadius: 28, background: 'linear-gradient(135deg,#0B1B33 0%,#11305a 100%)', padding: '64px 56px', overflow: 'hidden' }}>
+          <div style={{ position: 'absolute', inset: 0, backgroundImage: 'linear-gradient(rgba(255,255,255,0.04) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.04) 1px,transparent 1px)', backgroundSize: '42px 42px', WebkitMaskImage: 'radial-gradient(circle at 80% 50%,#000,transparent 75%)', maskImage: 'radial-gradient(circle at 80% 50%,#000,transparent 75%)' }} />
+          <div ref={ctaGlowRef} style={{ position: 'absolute', top: -100, right: -40, width: 420, height: 420, borderRadius: '50%', background: 'radial-gradient(circle,rgba(39,117,202,0.4),transparent 65%)', willChange: 'transform', pointerEvents: 'none' }} />
+
+          <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 40, flexWrap: 'wrap' }}>
+            <div>
+              <h2 style={{ fontSize: 40, lineHeight: 1.08, letterSpacing: '-0.03em', fontWeight: 800, color: '#fff', margin: 0, maxWidth: 540 }}>Spend by the millisecond.<br />Settle in USDC.</h2>
+              <p style={{ fontSize: 17, color: '#9fb3cc', margin: '16px 0 0', maxWidth: 480, lineHeight: 1.5 }}>Whether you hold a XanCard or build the platforms that charge it — start in minutes.</p>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 13, minWidth: 230 }}>
+              <button
+                style={{ fontFamily: 'inherit', fontSize: 15.5, fontWeight: 700, color: '#fff', background: '#2775CA', border: 'none', borderRadius: 12, cursor: 'pointer', padding: '16px 26px', boxShadow: '0 12px 30px rgba(39,117,202,0.4)', transition: 'transform .2s ease,box-shadow .2s ease' }}
+                onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 18px 40px rgba(39,117,202,0.5)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = '0 12px 30px rgba(39,117,202,0.4)'; }}
+              >Link your XanCard</button>
+              <button
+                style={{ fontFamily: 'inherit', fontSize: 15.5, fontWeight: 600, color: '#fff', background: 'transparent', border: '1.5px solid rgba(255,255,255,0.28)', borderRadius: 12, cursor: 'pointer', padding: '16px 26px', transition: 'transform .2s ease,border-color .2s ease,background .2s ease' }}
+                onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.6)'; e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.transform = ''; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.28)'; e.currentTarget.style.background = 'transparent'; }}
+              >Start charging</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ══ FOOTER ══════════════════════════════════════════════════ */}
+      <footer style={{ borderTop: '1px solid rgba(11,27,51,0.08)', padding: '40px 40px' }}>
+        <div style={{ maxWidth: 1180, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+            <LogoMark size={24} />
+            <span style={{ fontWeight: 800, fontSize: 17, letterSpacing: '-0.02em' }}>XanPay</span>
+          </div>
+          <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12.5, color: '#8194AC' }}>
+            Nanopayments on Circle Gateway &amp; Arc · Settled in USDC
+          </div>
+          <div style={{ display: 'flex', gap: 24, fontSize: 14, color: '#56657D', fontWeight: 500 }}>
+            {['Docs', 'Privacy', 'Status'].map((l) => (
+              <a key={l} href="#" style={{ color: 'inherit', textDecoration: 'none', cursor: 'pointer', transition: 'color .15s' }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = '#2775CA')}
+                onMouseLeave={(e) => (e.currentTarget.style.color = '#56657D')}
+              >{l}</a>
             ))}
           </div>
         </div>
-      </section>
-
-      {/* ── Code block ───────────────────────────────────────────────── */}
-      <section className="py-28 bg-white">
-        <div className="max-w-6xl mx-auto px-6">
-          <div className="max-w-xl mx-auto xp-reveal">
-            <div className="text-[10px] font-bold text-[#2775CA] uppercase tracking-[0.15em] mb-4">Developer SDK</div>
-            <h2 className="text-3xl font-bold text-[#0B1B33] mb-3">Three lines of code.</h2>
-            <p className="text-[#0B1B33]/55 mb-8 leading-relaxed">
-              Add micro-payments to any Node.js API in minutes. No subscriptions, no billing logic.
-            </p>
-
-            <div className="bg-[#0B1B33] rounded-2xl p-6 relative">
-              <button
-                onClick={copyCode}
-                className="absolute top-4 right-4 text-xs text-white/40 hover:text-white/80 transition-colors bg-white/[0.06] hover:bg-white/[0.12] px-2.5 py-1 rounded-md font-medium"
-              >
-                {copied ? '✓ Copied' : 'Copy'}
-              </button>
-
-              <pre className="text-sm leading-7 overflow-x-auto">
-                <code className="font-mono">
-                  <span className="text-white/35">{`// npm install @xanpay/sdk`}</span>{'\n'}
-                  <span className="text-white/35">{`// Protect any route:`}</span>{'\n'}
-                  <span className="text-[#2775CA]">app</span>
-                  <span className="text-white/80">.use(</span>
-                  <span className="text-emerald-400">xanpay</span>
-                  <span className="text-white/80">.charge(</span>
-                  <span className="text-amber-300">{`'/v1/infer'`}</span>
-                  <span className="text-white/80">{`, { `}</span>
-                  <span className="text-orange-300">price</span>
-                  <span className="text-white/80">{`: `}</span>
-                  <span className="text-amber-300">{`'$0.0008'`}</span>
-                  <span className="text-white/80">{` }))`}</span>
-                </code>
-              </pre>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ── CTA Banner ───────────────────────────────────────────────── */}
-      <section className="py-28 bg-[#0B1B33] relative overflow-hidden">
-        <div className="absolute inset-0 pointer-events-none">
-          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[32rem] h-[32rem] bg-[#2775CA]/[0.18] rounded-full blur-[6rem]" />
-          <div className="absolute bottom-0 right-1/4 w-64 h-64 bg-[#2775CA]/10 rounded-full blur-3xl" />
-        </div>
-
-        <div className="max-w-4xl mx-auto px-6 text-center relative xp-reveal">
-          <h2 className="text-4xl md:text-5xl font-bold text-white mb-6 leading-tight">
-            Start charging by the<br />
-            <span className="text-[#2775CA]">millisecond</span> today.
-          </h2>
-          <p className="text-white/50 text-lg mb-10 max-w-xl mx-auto leading-relaxed">
-            Join developers and users building the next generation of usage-based payments.
-          </p>
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <a href="#" className="bg-[#2775CA] text-white font-semibold px-8 py-4 rounded-full hover:bg-[#1d5fa8] transition-all hover:shadow-xl hover:shadow-[#2775CA]/40">
-              Get your XanCard
-            </a>
-            <a href="#" className="border border-white/20 text-white font-semibold px-8 py-4 rounded-full hover:bg-white/10 transition-colors">
-              Read the docs
-            </a>
-          </div>
-        </div>
-      </section>
-
-      {/* ── Footer ───────────────────────────────────────────────────── */}
-      <footer className="bg-[#0B1B33] border-t border-white/[0.08] py-14">
-        <div className="max-w-6xl mx-auto px-6">
-          <div className="flex flex-col md:flex-row justify-between items-start gap-10">
-            <div>
-              <div className="text-xl font-bold text-white mb-2">
-                Xan<span className="text-[#2775CA]">Pay</span>
-              </div>
-              <div className="text-sm text-white/35">Charged by the millisecond.</div>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-10 text-sm">
-              {[
-                { heading: 'Product',    links: ['How it works', 'Pricing', 'XanCard'] },
-                { heading: 'Developers', links: ['Docs', 'SDK', 'API Reference'] },
-                { heading: 'Company',    links: ['Blog', 'Twitter', 'GitHub'] },
-              ].map((col) => (
-                <div key={col.heading}>
-                  <div className="text-white/55 font-semibold mb-4">{col.heading}</div>
-                  <div className="space-y-2.5">
-                    {col.links.map((l) => (
-                      <a key={l} href="#" className="block text-white/35 hover:text-white/65 transition-colors">
-                        {l}
-                      </a>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="border-t border-white/[0.08] mt-12 pt-6 text-xs text-white/25 text-center">
-            © 2025 XanPay. All rights reserved.
-          </div>
-        </div>
       </footer>
-    </div>
-  );
-}
 
-/* ── Bubble ─────────────────────────────────────────────────────────── */
-function Bubble({
-  label,
-  dot,
-  style,
-}: {
-  label: string;
-  dot: string;
-  style?: React.CSSProperties;
-}) {
-  return (
-    <div
-      className="absolute bg-white/95 shadow-lg shadow-black/10 rounded-2xl px-3 py-2 flex items-center gap-2 text-xs font-mono font-semibold text-[#0B1B33] z-10 border border-white/60"
-      style={style}
-    >
-      <span className={`w-2 h-2 ${dot} rounded-full`} />
-      {label}
     </div>
   );
 }
