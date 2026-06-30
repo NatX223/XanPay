@@ -396,7 +396,7 @@ export default function OnboardingFlow() {
                   onClick={() => go(1)}
                   style={{ fontFamily: 'inherit', width: '100%', fontSize: 15, fontWeight: 600, color: '#0B1B33', background: '#fff', border: '1.5px solid rgba(11,27,51,0.15)', borderRadius: 12, cursor: 'pointer', padding: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, transition: 'border-color .2s' }}
                 >
-                  <span style={{ fontSize: 16 }}>🔑</span> Continue with passkey
+                  <span style={{ fontSize: 16 }}></span> Continue with Google
                 </button>
 
                 <p style={{ fontSize: 12, color: '#8194AC', lineHeight: 1.5, margin: '22px 0 0', textAlign: 'center' }}>
@@ -421,13 +421,6 @@ export default function OnboardingFlow() {
                   onKeyDown={(e) => e.key === 'Enter' && name.trim().length >= 2 && go(2)}
                   style={inputBase}
                 />
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 18, padding: '13px 15px', borderRadius: 12, background: '#EAF2FC', border: '1px solid rgba(39,117,202,0.18)' }}>
-                  <span style={{ fontSize: 17 }}>🛡️</span>
-                  <span style={{ fontSize: 13, color: '#1B5FA8', lineHeight: 1.45 }}>
-                    You'll never manage a wallet or seed phrase. <b>Circle MPC</b> splits and secures your keys.
-                  </span>
-                </div>
 
                 <div style={{ display: 'flex', gap: 12, marginTop: 24 }}>
                   <button onClick={() => go(0)} style={ghostBtn}>Back</button>
@@ -496,7 +489,7 @@ export default function OnboardingFlow() {
                 {/* Method info panels */}
                 {method === 'deposit' && (
                   <div style={{ marginTop: 16, padding: '14px 16px', borderRadius: 12, background: '#0B1B33', color: '#cdd9e8' }}>
-                    <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10.5, letterSpacing: '0.12em', color: '#6f86a3' }}>SEND USDC (ARC / BASE) TO</div>
+                    <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10.5, letterSpacing: '0.12em', color: '#6f86a3' }}>SEND USDC (ARC) TO</div>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 7 }}>
                       <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 13, color: '#fff', wordBreak: 'break-all' }}>0xA1c…7F2b</span>
                       <span

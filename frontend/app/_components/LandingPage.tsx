@@ -169,11 +169,11 @@ export default function LandingPage() {
             </div>
 
             <h1 style={{ fontSize: 62, lineHeight: 1.02, letterSpacing: '-0.035em', fontWeight: 800, margin: '24px 0 0' }}>
-              One card.<br />Charged by the<br /><span style={{ color: '#2775CA' }}>millisecond.</span>
+              Payments.<br />Charged by the<br /><span style={{ color: '#2775CA' }}>millicents.</span>
             </h1>
 
             <p style={{ fontSize: 19, lineHeight: 1.55, color: '#42546E', maxWidth: 480, margin: '22px 0 0', fontWeight: 400 }}>
-              XanPay turns a funded USDC wallet into a card you actually understand. Link it once, and platforms charge you in real time — per API call, per second, per query. No wallet. No seed phrase. Just a balance.
+              XanPay is a unified virtual card built for granular billing. Link it to your favorite platforms to authorize micro-charging in real time—whether you are pulling an API call, reading a single article, or running a machine learning model. You only pay for the exact value you extract.
             </p>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 34 }}>
@@ -182,7 +182,7 @@ export default function LandingPage() {
                 onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 16px 34px rgba(39,117,202,0.46)'; }}
                 onMouseLeave={(e) => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = '0 10px 26px rgba(39,117,202,0.34)'; }}
               >
-                Link your XanCard <span style={{ fontSize: 17, lineHeight: 1 }}>→</span>
+                Create your XanCard <span style={{ fontSize: 17, lineHeight: 1 }}>→</span>
               </button>
               <button
                 style={{ fontFamily: 'inherit', fontSize: 15.5, fontWeight: 600, color: '#0B1B33', background: 'transparent', border: '1.5px solid rgba(11,27,51,0.18)', borderRadius: 12, cursor: 'pointer', padding: '15px 24px', transition: 'transform .2s ease,border-color .2s ease,background .2s ease' }}
@@ -443,7 +443,7 @@ export default function LandingPage() {
                 style={{ fontFamily: 'inherit', fontSize: 15.5, fontWeight: 700, color: '#fff', background: '#2775CA', border: 'none', borderRadius: 12, cursor: 'pointer', padding: '16px 26px', boxShadow: '0 12px 30px rgba(39,117,202,0.4)', transition: 'transform .2s ease,box-shadow .2s ease' }}
                 onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 18px 40px rgba(39,117,202,0.5)'; }}
                 onMouseLeave={(e) => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = '0 12px 30px rgba(39,117,202,0.4)'; }}
-              >Link your XanCard</button>
+              >Create your XanCard</button>
               <button
                 style={{ fontFamily: 'inherit', fontSize: 15.5, fontWeight: 600, color: '#fff', background: 'transparent', border: '1.5px solid rgba(255,255,255,0.28)', borderRadius: 12, cursor: 'pointer', padding: '16px 26px', transition: 'transform .2s ease,border-color .2s ease,background .2s ease' }}
                 onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.6)'; e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
