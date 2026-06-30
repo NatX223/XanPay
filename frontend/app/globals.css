@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+:root {
+  --xp-navy: #0B1B33;
+  --xp-blue: #2775CA;
+  --xp-bg: #F4F7FB;
+}
+
+@theme inline {
+  --color-xp-navy: #0B1B33;
+  --color-xp-blue: #2775CA;
+  --color-xp-bg: #F4F7FB;
+  --font-sans: var(--font-hanken);
+  --font-mono: var(--font-jetbrains);
+}
+
+@keyframes xp-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(0.97); }
+}
+
+@keyframes xp-float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+}
+
+@keyframes xp-rise {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes xp-sheen {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(600%); }
+}
+
+.xp-reveal {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.65s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.65s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.xp-revealed {
+  opacity: 1;
+  transform: translateY(0);
+}
