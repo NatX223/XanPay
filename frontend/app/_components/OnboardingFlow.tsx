@@ -283,7 +283,7 @@ export default function OnboardingFlow() {
                       </div>
                       <div style={{ textAlign: 'right', fontFamily: "'JetBrains Mono',monospace", fontSize: 10, lineHeight: 1.5, color: '#3a5074' }}>
                         <div style={{ fontWeight: 600, color: '#1B5FA8' }}>ARC</div>
-                        <div style={{ opacity: 0.7 }}>via Circle</div>
+                        <div style={{ opacity: 0.7 }}>powered by Circle</div>
                       </div>
                     </div>
                   </div>
@@ -302,7 +302,7 @@ export default function OnboardingFlow() {
                   <div style={{ width: '100%', height: 46, background: '#06101f', marginTop: 26 }} />
                   <div style={{ padding: '18px 26px' }}>
                     <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10.5, letterSpacing: '0.12em', color: '#6f86a3' }}>
-                      SECURED BY CIRCLE MPC · NO SEED PHRASE
+                      XANPAY . ARC
                     </div>
                     <div style={{
                       marginTop: 14, height: 30, borderRadius: 6,
@@ -400,7 +400,7 @@ export default function OnboardingFlow() {
                 </button>
 
                 <p style={{ fontSize: 12, color: '#8194AC', lineHeight: 1.5, margin: '22px 0 0', textAlign: 'center' }}>
-                  By continuing you agree to the Terms. Keys secured by <b style={{ color: '#56657D' }}>Circle MPC</b>.
+                  By continuing you agree to the Terms.<b style={{ color: '#56657D' }}></b>
                 </p>
               </div>
             )}

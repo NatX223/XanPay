@@ -138,11 +138,16 @@ export default function LandingPage() {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 34 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 28, fontSize: 14.5, fontWeight: 500, color: '#42546E' }}>
-            {['How it works', 'For developers', 'Pricing', 'Docs'].map((l) => (
-              <a key={l} href="#" style={{ color: 'inherit', textDecoration: 'none', cursor: 'pointer', transition: 'color .15s' }}
+            {[
+              { label: 'How it works', href: '#' },
+              { label: 'For developers', href: '/developers/onboarding' },
+              { label: 'Pricing', href: '#' },
+              { label: 'Docs', href: '#' },
+            ].map(({ label, href }) => (
+              <a key={label} href={href} style={{ color: 'inherit', textDecoration: 'none', cursor: 'pointer', transition: 'color .15s' }}
                 onMouseEnter={(e) => (e.currentTarget.style.color = '#2775CA')}
                 onMouseLeave={(e) => (e.currentTarget.style.color = '#42546E')}
-              >{l}</a>
+              >{label}</a>
             ))}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
