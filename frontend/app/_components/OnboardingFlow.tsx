@@ -1,6 +1,9 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
+import { getErrorMessage, signInWithGoogle, signUpOrSignInWithEmail } from '@/lib/auth';
+import { createCard, createGroup, createUserProfile, getCardBalance, listCards, listGroups, updateCardRules } from '@/lib/api';
+import type { Card } from '@/lib/types/api';
 
 type Method = 'deposit' | 'ramp';
 
@@ -22,13 +25,28 @@ function fmt(n: string | number) {
 export default function OnboardingFlow() {
   const [step, setStep]     = useState(0);
   const [email, setEmail]   = useState('');
+  const [password, setPassword] = useState('');
   const [name, setName]     = useState('');
   const [amount, setAmount] = useState('');
   const [method, setMethod] = useState<Method>('deposit');
   const [flipped, setFlipped] = useState(false);
 
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [funding, setFunding] = useState(false);
+  const [fundError, setFundError] = useState<string | null>(null);
+  const [card, setCard] = useState<Card | null>(null);
+  const [realBalance, setRealBalance] = useState(0);
+  const [balanceCardId, setBalanceCardId] = useState<string | null>(null);
+
   const confettiRef = useRef<HTMLDivElement>(null);
   const bodyRef     = useRef<HTMLDivElement>(null);
+
+  /* ── derived values needed by handlers below ──────────────────────── */
+  const amt = Number(amount) || 0;
+  const emailValid = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
 
   /* ── confetti burst ─────────────────────────────────────────────── */
   const burst = useCallback(() => {
@@ -71,14 +89,99 @@ export default function OnboardingFlow() {
     if (enteringReveal) setTimeout(burst, 420);
   }, [step, burst]);
 
+  /* ── step 0 → account ───────────────────────────────────────────── */
+  const handleEmailContinue = useCallback(async () => {
+    if (!emailValid || password.length < 8 || authSubmitting) return;
+    setAuthSubmitting(true);
+    setAuthError(null);
+    try {
+      await signUpOrSignInWithEmail(email.trim(), password);
+      go(1);
+    } catch (err) {
+      setAuthError(getErrorMessage(err));
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }, [email, password, authSubmitting]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleGoogleContinue = useCallback(async () => {
+    if (authSubmitting) return;
+    setAuthSubmitting(true);
+    setAuthError(null);
+    try {
+      const user = await signInWithGoogle();
+      setEmail(user.email ?? '');
+      if (user.displayName) setName(user.displayName);
+      go(1);
+    } catch (err) {
+      setAuthError(getErrorMessage(err));
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }, [authSubmitting]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ── step 1 → identity: create central wallet + default card ─────── */
+  const handleIdentityContinue = useCallback(async () => {
+    if (name.trim().length < 2 || creating) return;
+    setCreating(true);
+    setCreateError(null);
+    try {
+      await createUserProfile({ name: name.trim(), email });
+
+      const groups = await listGroups();
+      const group = groups.find((g) => g.name === 'General') ?? (await createGroup({ name: 'General' }));
+
+      const existingCards = await listCards();
+      const myCard = existingCards[0] ?? (await createCard({ name: `${name.trim()}'s XanCard`, groupId: group.id }));
+
+      setCard(myCard);
+      go(2);
+    } catch (err) {
+      setCreateError(getErrorMessage(err));
+    } finally {
+      setCreating(false);
+    }
+  }, [name, email, creating]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ── step 2 → fund: save the chosen monthly cap ───────────────────── */
+  const handleFundContinue = useCallback(async () => {
+    if (!amt || !card || funding) return;
+    setFunding(true);
+    setFundError(null);
+    try {
+      if (amt !== card.rules.monthly) {
+        const updated = await updateCardRules(card.id, { monthly: amt });
+        setCard(updated);
+      }
+      go(3);
+    } catch (err) {
+      setFundError(getErrorMessage(err));
+    } finally {
+      setFunding(false);
+    }
+  }, [amt, card, funding]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ── step 3 → spendable Gateway balance (sweeps any deposit into Gateway first) ──── */
+  useEffect(() => {
+    if (step !== 3 || !card) return;
+    let cancelled = false;
+    getCardBalance(card.id)
+      .then(({ gatewayBalance }) => {
+        if (cancelled) return;
+        setRealBalance(gatewayBalance);
+      })
+      .catch(() => { if (!cancelled) setRealBalance(0); })
+      .finally(() => { if (!cancelled) setBalanceCardId(card.id); });
+    return () => { cancelled = true; };
+  }, [step, card]);
+
+  const balanceLoading = step === 3 && card !== null && balanceCardId !== card.id;
+
   /* ── derived values ─────────────────────────────────────────────── */
-  const amt         = Number(amount) || 0;
   const cardName    = name.trim() ? name.trim().toUpperCase() : 'YOUR NAME';
-  const cardBalance = fmt(amount);
+  const cardBalance = fmt(step >= 3 ? realBalance : amount);
   const funded      = step >= 3;
   const firstName   = name.trim().split(/\s+/)[0] || 'there';
-
-  const emailValid = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
 
   let cardTransform = 'rotateY(-12deg) rotateX(7deg)';
   if (step === 3) cardTransform = flipped ? 'rotateY(168deg) rotateX(4deg)' : 'rotateY(0deg) rotateX(3deg) scale(1.04)';
@@ -378,12 +481,33 @@ export default function OnboardingFlow() {
                   placeholder="you@company.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && emailValid && go(1)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleEmailContinue()}
+                  disabled={authSubmitting}
                   style={inputBase}
                 />
 
-                <button onClick={() => go(1)} disabled={!emailValid} style={{ ...primaryBtn(!emailValid), width: '100%', marginTop: 18 }}>
-                  Continue →
+                <label style={{ ...labelStyle, display: 'block', marginTop: 16 }}>Password</label>
+                <input
+                  className="ob-fld"
+                  type="password"
+                  placeholder="At least 8 characters"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleEmailContinue()}
+                  disabled={authSubmitting}
+                  style={inputBase}
+                />
+
+                {authError && (
+                  <p style={{ fontSize: 12.5, color: '#C53030', lineHeight: 1.5, margin: '10px 0 0' }}>{authError}</p>
+                )}
+
+                <button
+                  onClick={handleEmailContinue}
+                  disabled={!emailValid || password.length < 8 || authSubmitting}
+                  style={{ ...primaryBtn(!emailValid || password.length < 8 || authSubmitting), width: '100%', marginTop: 18 }}
+                >
+                  {authSubmitting ? 'Signing in…' : 'Continue →'}
                 </button>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '20px 0' }}>
@@ -393,8 +517,9 @@ export default function OnboardingFlow() {
                 </div>
 
                 <button
-                  onClick={() => go(1)}
-                  style={{ fontFamily: 'inherit', width: '100%', fontSize: 15, fontWeight: 600, color: '#0B1B33', background: '#fff', border: '1.5px solid rgba(11,27,51,0.15)', borderRadius: 12, cursor: 'pointer', padding: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, transition: 'border-color .2s' }}
+                  onClick={handleGoogleContinue}
+                  disabled={authSubmitting}
+                  style={{ fontFamily: 'inherit', width: '100%', fontSize: 15, fontWeight: 600, color: '#0B1B33', background: '#fff', border: '1.5px solid rgba(11,27,51,0.15)', borderRadius: 12, cursor: authSubmitting ? 'not-allowed' : 'pointer', padding: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, transition: 'border-color .2s', opacity: authSubmitting ? 0.6 : 1 }}
                 >
                   <span style={{ fontSize: 16 }}></span> Continue with Google
                 </button>
@@ -418,14 +543,19 @@ export default function OnboardingFlow() {
                   placeholder="Ada Lovelace"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && name.trim().length >= 2 && go(2)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleIdentityContinue()}
+                  disabled={creating}
                   style={inputBase}
                 />
 
+                {createError && (
+                  <p style={{ fontSize: 12.5, color: '#C53030', lineHeight: 1.5, margin: '10px 0 0' }}>{createError}</p>
+                )}
+
                 <div style={{ display: 'flex', gap: 12, marginTop: 24 }}>
-                  <button onClick={() => go(0)} style={ghostBtn}>Back</button>
-                  <button onClick={() => go(2)} disabled={name.trim().length < 2} style={{ ...primaryBtn(name.trim().length < 2), flex: 1 }}>
-                    Continue →
+                  <button onClick={() => go(0)} disabled={creating} style={ghostBtn}>Back</button>
+                  <button onClick={handleIdentityContinue} disabled={name.trim().length < 2 || creating} style={{ ...primaryBtn(name.trim().length < 2 || creating), flex: 1 }}>
+                    {creating ? 'Creating your wallet…' : 'Continue →'}
                   </button>
                 </div>
               </div>
@@ -437,7 +567,7 @@ export default function OnboardingFlow() {
                 <div style={stepLabel}>Step 3 of 5</div>
                 <h1 className="ob-h1" style={heading}>Fund your card</h1>
                 <p style={{ ...sub, margin: '0 0 22px' }}>
-                  Add USDC once. It sits as your balance and draws down per use — down to a hundredth of a cent.
+                  Set a monthly cap, then send USDC to your card&apos;s address below. It draws down per use — down to a hundredth of a cent.
                 </p>
 
                 {/* Method toggle */}
@@ -457,7 +587,7 @@ export default function OnboardingFlow() {
                 </div>
 
                 {/* Amount chips */}
-                <label style={labelStyle}>Amount</label>
+                <label style={labelStyle}>Monthly cap</label>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 9, marginTop: 8 }}>
                   {AMOUNT_CHIPS.map(({ v, label }) => {
                     const sel = amt === v;
@@ -491,26 +621,34 @@ export default function OnboardingFlow() {
                   <div style={{ marginTop: 16, padding: '14px 16px', borderRadius: 12, background: '#0B1B33', color: '#cdd9e8' }}>
                     <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10.5, letterSpacing: '0.12em', color: '#6f86a3' }}>SEND USDC (ARC) TO</div>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 7 }}>
-                      <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 13, color: '#fff', wordBreak: 'break-all' }}>0xA1c…7F2b</span>
-                      <span
-                        onClick={() => navigator.clipboard.writeText('0xA1c7F2b')}
-                        style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, fontWeight: 700, color: '#6cb0f5', background: 'rgba(39,117,202,0.2)', borderRadius: 7, padding: '5px 9px', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                      >
-                        Copy
+                      <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 13, color: '#fff', wordBreak: 'break-all' }}>
+                        {card ? `${card.walletAddress.slice(0, 6)}…${card.walletAddress.slice(-4)}` : 'Loading…'}
                       </span>
+                      {card && (
+                        <span
+                          onClick={() => navigator.clipboard.writeText(card.walletAddress)}
+                          style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, fontWeight: 700, color: '#6cb0f5', background: 'rgba(39,117,202,0.2)', borderRadius: 7, padding: '5px 9px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                        >
+                          Copy
+                        </span>
+                      )}
                     </div>
                   </div>
                 )}
                 {method === 'ramp' && (
                   <div style={{ marginTop: 16, padding: '13px 15px', borderRadius: 12, background: '#EAF2FC', border: '1px solid rgba(39,117,202,0.18)', fontSize: 13, color: '#1B5FA8', lineHeight: 1.45 }}>
-                    Your debit card is converted to USDC instantly. <b>Coming soon</b> — we'll preview it with a demo balance.
+                    Your debit card is converted to USDC instantly. <b>Coming soon</b> — we&apos;ll preview it with a demo balance.
                   </div>
                 )}
 
+                {fundError && (
+                  <p style={{ fontSize: 12.5, color: '#C53030', lineHeight: 1.5, margin: '14px 0 0' }}>{fundError}</p>
+                )}
+
                 <div style={{ display: 'flex', gap: 12, marginTop: 24 }}>
-                  <button onClick={() => go(1)} style={ghostBtn}>Back</button>
-                  <button onClick={() => go(3)} disabled={!amt} style={{ ...primaryBtn(!amt), flex: 1 }}>
-                    Fund &amp; create card →
+                  <button onClick={() => go(1)} disabled={funding} style={ghostBtn}>Back</button>
+                  <button onClick={handleFundContinue} disabled={!amt || funding} style={{ ...primaryBtn(!amt || funding), flex: 1 }}>
+                    {funding ? 'Saving…' : 'Set cap & continue →'}
                   </button>
                 </div>
               </div>
@@ -522,7 +660,11 @@ export default function OnboardingFlow() {
                 <div style={stepLabel}>Step 4 of 5</div>
                 <h1 className="ob-h1" style={{ ...heading, fontSize: 36, lineHeight: 1.08, margin: '12px 0 8px' }}>Your card is live.</h1>
                 <p style={{ fontSize: 16, color: '#5B6B82', lineHeight: 1.5, margin: '0 auto 28px', maxWidth: 380 }}>
-                  ${cardBalance} USDC is loaded and ready. Flip it over, or keep going.
+                  {balanceLoading
+                    ? 'Checking your balance…'
+                    : realBalance > 0
+                      ? `$${cardBalance} USDC has landed. Flip it over, or keep going.`
+                      : 'Your wallet is live at $0.00 — send USDC to the address you copied to fund it. Flip it over, or keep going.'}
                 </p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 11, alignItems: 'center' }}>
                   <button
@@ -547,16 +689,16 @@ export default function OnboardingFlow() {
 
                 <h1 className="ob-h1" style={{ ...heading, margin: '20px 0 6px' }}>You&apos;re all set, {firstName}.</h1>
                 <p style={sub}>
-                  Your XanCard is funded with <b style={{ color: '#0B1B33' }}>${cardBalance} USDC</b>. Link it to a platform and you&apos;ll only ever pay for exactly what you use.
+                  Your XanCard is live with a <b style={{ color: '#0B1B33' }}>${fmt(amount)} monthly cap</b> and a current balance of <b style={{ color: '#0B1B33' }}>${cardBalance} USDC</b>. Link it to a platform and you&apos;ll only ever pay for exactly what you use.
                 </p>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
                   <button style={{ fontFamily: 'inherit', fontSize: 15.5, fontWeight: 700, color: '#fff', background: '#2775CA', border: 'none', borderRadius: 12, cursor: 'pointer', padding: 15, boxShadow: '0 10px 26px rgba(39,117,202,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', transition: 'transform .2s' }}>
                     <span>Link your first platform</span><span>→</span>
                   </button>
-                  <button style={{ fontFamily: 'inherit', fontSize: 15, fontWeight: 600, color: '#0B1B33', background: '#fff', border: '1.5px solid rgba(11,27,51,0.15)', borderRadius: 12, cursor: 'pointer', padding: 14, transition: 'border-color .2s' }}>
+                  <a href="/dashboard" style={{ fontFamily: 'inherit', fontSize: 15, fontWeight: 600, color: '#0B1B33', background: '#fff', border: '1.5px solid rgba(11,27,51,0.15)', borderRadius: 12, cursor: 'pointer', padding: 14, transition: 'border-color .2s', textDecoration: 'none', textAlign: 'center' }}>
                     Go to dashboard
-                  </button>
+                  </a>
                 </div>
 
                 <div style={{ display: 'flex', gap: 18, marginTop: 30, paddingTop: 22, borderTop: '1px solid rgba(11,27,51,0.08)' }}>
@@ -573,7 +715,10 @@ export default function OnboardingFlow() {
                 </div>
 
                 <button
-                  onClick={() => { setStep(0); setEmail(''); setName(''); setAmount(''); setMethod('deposit'); setFlipped(false); }}
+                  onClick={() => {
+                    setStep(0); setEmail(''); setPassword(''); setName(''); setAmount(''); setMethod('deposit'); setFlipped(false);
+                    setCard(null); setRealBalance(0); setBalanceCardId(null); setAuthError(null); setCreateError(null); setFundError(null);
+                  }}
                   style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11.5, color: '#8194AC', background: 'transparent', border: 'none', cursor: 'pointer', marginTop: 22, padding: 0 }}
                 >
                   ↻ Replay onboarding

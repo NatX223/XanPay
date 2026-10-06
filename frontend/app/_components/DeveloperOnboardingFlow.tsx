@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useRef, useCallback } from 'react';
+import { getErrorMessage, signInWithGoogle, signUpOrSignInWithEmail } from '@/lib/auth';
+import { ApiError, registerPlatform } from '@/lib/api';
 
 type UseCase = 'action' | 'inference' | 'second';
 type Stack = 'Express' | 'Next.js' | 'Hono' | 'FastAPI';
@@ -13,8 +15,6 @@ const CAPTIONS = [
   '🎉 Welcome to XanPay',
 ];
 const CONFETTI_COLORS = ['#2775CA', '#3a8ce0', '#3ddc97', '#f1d98a', '#ffffff', '#9cc6f3'];
-const KEY = 'sk_live_xp_9f2Ka7Dq4mZ1v8Rb3Xc6Ht0';
-const MASKED_KEY = 'sk_live_xp_' + '•'.repeat(22);
 const SCOPES = ['charges:write', 'settlements:read', 'routes:manage'];
 const STACKS: Stack[] = ['Express', 'Next.js', 'Hono', 'FastAPI'];
 const USE_CASES: { id: UseCase; label: string; glyph: string }[] = [
@@ -51,6 +51,13 @@ export default function DeveloperOnboardingFlow() {
   const [copied, setCopied] = useState(false);
   const [snipCopied, setSnipCopied] = useState(false);
   const [count, setCount] = useState(0);
+
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [registering, setRegistering] = useState(false);
+  const [registerError, setRegisterError] = useState<string | null>(null);
+  const [alreadyRegistered, setAlreadyRegistered] = useState(false);
+  const [apiKey, setApiKey] = useState('');
 
   const bodyRef = useRef<HTMLDivElement>(null);
   const confettiRef = useRef<HTMLDivElement>(null);
@@ -149,7 +156,58 @@ export default function DeveloperOnboardingFlow() {
     setStep(0); setEmail(''); setPass(''); setOrg('');
     setUseCase('inference'); setStack('Express');
     setRevealed(false); setCopied(false); setSnipCopied(false); setCount(0);
+    setAuthError(null); setRegisterError(null); setAlreadyRegistered(false); setApiKey('');
   }, []);
+
+  /* ── step 0 → account ───────────────────────────────────────────── */
+  const handleEmailContinue = useCallback(async () => {
+    if (!emailValid || pass.length < 8 || authSubmitting) return;
+    setAuthSubmitting(true);
+    setAuthError(null);
+    try {
+      await signUpOrSignInWithEmail(email.trim(), pass);
+      go(1);
+    } catch (err) {
+      setAuthError(getErrorMessage(err));
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }, [email, pass, authSubmitting]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleGoogleContinue = useCallback(async () => {
+    if (authSubmitting) return;
+    setAuthSubmitting(true);
+    setAuthError(null);
+    try {
+      const user = await signInWithGoogle();
+      setEmail(user.email ?? '');
+      go(1);
+    } catch (err) {
+      setAuthError(getErrorMessage(err));
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }, [authSubmitting]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ── step 1 → project: self-serve platform registration ──────────── */
+  const handleRegisterContinue = useCallback(async () => {
+    if (org.trim().length < 2 || registering) return;
+    setRegistering(true);
+    setRegisterError(null);
+    try {
+      const platform = await registerPlatform({ name: org.trim() });
+      setApiKey(platform.apiKey);
+      go(2);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        setAlreadyRegistered(true);
+      } else {
+        setRegisterError(getErrorMessage(err));
+      }
+    } finally {
+      setRegistering(false);
+    }
+  }, [org, registering]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── derived values ─────────────────────────────────────────────── */
   const emailValid = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
@@ -163,7 +221,7 @@ export default function DeveloperOnboardingFlow() {
 
   const route = ROUTE_BY_CASE[useCase];
   const price = PRICE_BY_CASE[useCase];
-  const codeLine = `app.use(xanpay.charge('${route}', { price: ${price} }))`;
+  const codeLine = `app.post('${route}', xanpay.protect({ price: ${price} }), handler)`;
   const snippetFile = stack === 'FastAPI' ? 'main.py' : 'server.ts';
 
   const paths = buildChartPaths();
@@ -261,8 +319,10 @@ export default function DeveloperOnboardingFlow() {
     color: '#42546E',
   };
 
+  const maskedApiKey = apiKey.slice(0, 11) + '•'.repeat(Math.max(0, apiKey.length - 11));
+
   const copyKey = () => {
-    try { navigator.clipboard?.writeText(KEY); } catch { /* clipboard unavailable */ }
+    try { navigator.clipboard?.writeText(apiKey); } catch { /* clipboard unavailable */ }
     setCopied(true);
     setRevealed(true);
     clearTimeout(copyResetRef.current);
@@ -364,7 +424,7 @@ export default function DeveloperOnboardingFlow() {
                   </div>
                   <div style={{ padding: 22 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#0a1526', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 11, padding: '14px 16px' }}>
-                      <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13.5, color: '#e6edf3', wordBreak: 'break-all', flex: 1 }}>{revealed ? KEY : MASKED_KEY}</span>
+                      <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13.5, color: '#e6edf3', wordBreak: 'break-all', flex: 1 }}>{revealed ? apiKey : maskedApiKey}</span>
                       <button onClick={() => setRevealed((r) => !r)} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 700, color: '#9cc6f3', background: 'rgba(39,117,202,0.18)', border: '1px solid rgba(39,117,202,0.3)', borderRadius: 7, cursor: 'pointer', padding: '6px 10px', whiteSpace: 'nowrap' }}>
                         {revealed ? 'Hide' : 'Reveal'}
                       </button>
@@ -476,7 +536,8 @@ export default function DeveloperOnboardingFlow() {
                   placeholder="you@company.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && !accountBlocked && go(1)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleEmailContinue()}
+                  disabled={authSubmitting}
                   style={inputBase}
                 />
 
@@ -487,12 +548,17 @@ export default function DeveloperOnboardingFlow() {
                   placeholder="At least 8 characters"
                   value={pass}
                   onChange={(e) => setPass(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && !accountBlocked && go(1)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleEmailContinue()}
+                  disabled={authSubmitting}
                   style={inputBase}
                 />
 
-                <button onClick={() => go(1)} disabled={accountBlocked} style={{ ...primaryBtn(accountBlocked), width: '100%', marginTop: 20 }}>
-                  Create account →
+                {authError && (
+                  <p style={{ fontSize: 12.5, color: '#C53030', lineHeight: 1.5, margin: '10px 0 0' }}>{authError}</p>
+                )}
+
+                <button onClick={handleEmailContinue} disabled={accountBlocked || authSubmitting} style={{ ...primaryBtn(accountBlocked || authSubmitting), width: '100%', marginTop: 20 }}>
+                  {authSubmitting ? 'Signing in…' : 'Create account →'}
                 </button>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '18px 0' }}>
@@ -501,8 +567,8 @@ export default function DeveloperOnboardingFlow() {
                   <div style={{ flex: 1, height: 1, background: 'rgba(11,27,51,0.1)' }} />
                 </div>
 
-                <button onClick={() => go(1)} style={{ fontFamily: 'inherit', width: '100%', fontSize: 15, fontWeight: 600, color: '#0B1B33', background: '#fff', border: '1.5px solid rgba(11,27,51,0.15)', borderRadius: 12, cursor: 'pointer', padding: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, transition: 'border-color .2s' }}>
-                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, fontSize: 15 }}>◈</span> Continue with GitHub
+                <button onClick={handleGoogleContinue} disabled={authSubmitting} style={{ fontFamily: 'inherit', width: '100%', fontSize: 15, fontWeight: 600, color: '#0B1B33', background: '#fff', border: '1.5px solid rgba(11,27,51,0.15)', borderRadius: 12, cursor: authSubmitting ? 'not-allowed' : 'pointer', padding: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, transition: 'border-color .2s', opacity: authSubmitting ? 0.6 : 1 }}>
+                  <span style={{ fontSize: 16 }}></span> Continue with Google
                 </button>
               </div>
             )}
@@ -520,7 +586,8 @@ export default function DeveloperOnboardingFlow() {
                   placeholder="e.g. Acme Inference"
                   value={org}
                   onChange={(e) => setOrg(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && !orgBlocked && go(2)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleRegisterContinue()}
+                  disabled={registering}
                   style={inputBase}
                 />
 
@@ -548,10 +615,20 @@ export default function DeveloperOnboardingFlow() {
                   })}
                 </div>
 
+                {registerError && (
+                  <p style={{ fontSize: 12.5, color: '#C53030', lineHeight: 1.5, margin: '14px 0 0' }}>{registerError}</p>
+                )}
+                {alreadyRegistered && (
+                  <p style={{ fontSize: 12.5, color: '#C53030', lineHeight: 1.5, margin: '14px 0 0' }}>
+                    A platform is already registered for this account.{' '}
+                    <a href="/developers/dashboard" style={{ color: '#2775CA', fontWeight: 700 }}>Go to your dashboard →</a>
+                  </p>
+                )}
+
                 <div style={{ display: 'flex', gap: 12, marginTop: 26 }}>
-                  <button onClick={() => go(0)} style={ghostBtn}>Back</button>
-                  <button onClick={() => go(2)} disabled={orgBlocked} style={{ ...primaryBtn(orgBlocked), flex: 1 }}>
-                    Generate API key →
+                  <button onClick={() => go(0)} disabled={registering} style={ghostBtn}>Back</button>
+                  <button onClick={handleRegisterContinue} disabled={orgBlocked || registering} style={{ ...primaryBtn(orgBlocked || registering), flex: 1 }}>
+                    {registering ? 'Provisioning…' : 'Generate API key →'}
                   </button>
                 </div>
               </div>

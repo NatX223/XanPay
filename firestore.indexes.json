@@ -1,0 +1,21 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "charges",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "platformId", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "routes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "path", "order": "ASCENDING" },
+        { "fieldPath": "method", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

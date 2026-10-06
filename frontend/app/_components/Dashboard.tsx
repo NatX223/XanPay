@@ -1,34 +1,29 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { getErrorMessage, useAuthUser } from '@/lib/auth';
+import {
+  createCard as apiCreateCard,
+  createGroup as apiCreateGroup,
+  deleteCard,
+  getCardBalance,
+  getMyActivity,
+  getMyProfile,
+  listCards,
+  listGroups,
+  setCardActive,
+  updateCardRules,
+  withdrawCardBalance,
+} from '@/lib/api';
+import type { Card, CardRules, CircleTransaction, Group, User } from '@/lib/types/api';
 
 /* ─────────────────────────────────────────────────────────────────
    Types & fixtures
 ───────────────────────────────────────────────────────────────── */
-interface Rules {
-  monthly: number;
-  perCharge: string;
-  daily: string;
-  velocity: string;
-  autopause: boolean;
-  approve: boolean;
-  frozen: boolean;
-  platforms: string[];
-}
-interface CardT {
-  id: string;
-  groupId: string;
-  name: string;
-  last4: string;
+interface CardWithStats extends Card {
   balance: number;
-  spent: number;
-  rules: Rules;
-}
-interface GroupT {
-  id: string;
-  name: string;
-  accent: string;
-  glyph: string;
+  spentThisMonth: number;
 }
 interface Draft {
   name: string;
@@ -50,6 +45,8 @@ const GLYPH_COLORS = [
 ];
 const ACCENTS = ['#2775CA', '#14B8A6', '#6366F1', '#E0801B'];
 const LIMITS = [40, 80, 150, 300];
+/** Live-activity polling cadence — matches DeveloperDashboard's request-log polling for consistency. */
+const ACTIVITY_POLL_MS = 8000;
 
 const NAV_ITEMS = [
   { label: 'Overview', glyph: '◉', active: true },
@@ -59,28 +56,7 @@ const NAV_ITEMS = [
   { label: 'Settings', glyph: '⚙', active: false },
 ];
 
-const INITIAL_GROUPS: GroupT[] = [
-  { id: 'streaming', name: 'Streaming', accent: '#2775CA', glyph: '▶' },
-  { id: 'ai', name: 'AI & Inference', accent: '#14B8A6', glyph: '✦' },
-  { id: 'data', name: 'Data & APIs', accent: '#6366F1', glyph: '≡' },
-];
-
-const INITIAL_CARDS: CardT[] = [
-  { id: 'c1', groupId: 'streaming', name: 'Video & Music', last4: '4820', balance: 124.50, spent: 38.20, rules: { monthly: 80, perCharge: '2.00', daily: '10.00', velocity: '25', autopause: true, approve: false, frozen: false, platforms: ['video-stream.io', 'audio-cast.fm'] } },
-  { id: 'c2', groupId: 'streaming', name: 'Live Sports', last4: '1190', balance: 60.00, spent: 12.75, rules: { monthly: 40, perCharge: '1.50', daily: '8.00', velocity: '15', autopause: true, approve: false, frozen: false, platforms: ['live-sports.tv'] } },
-  { id: 'c3', groupId: 'ai', name: 'AI Assistant', last4: '7731', balance: 300.00, spent: 184.60, rules: { monthly: 250, perCharge: '5.00', daily: '40.00', velocity: '50', autopause: false, approve: true, frozen: false, platforms: ['ai-inference.dev', 'vector-search.dev'] } },
-  { id: 'c4', groupId: 'ai', name: 'Image Gen', last4: '2204', balance: 90.00, spent: 71.30, rules: { monthly: 75, perCharge: '3.00', daily: '15.00', velocity: '20', autopause: true, approve: false, frozen: true, platforms: ['render-farm.cloud'] } },
-  { id: 'c5', groupId: 'data', name: 'Geo & Lookups', last4: '5567', balance: 48.00, spent: 9.10, rules: { monthly: 60, perCharge: '1.00', daily: '6.00', velocity: '40', autopause: false, approve: false, frozen: false, platforms: ['geo-lookup.api', 'data-query.app'] } },
-];
-
-const ACTIVITY = [
-  { platform: 'ai-inference.dev', card: 'AI Assistant', note: 'inference', amount: '0.0012', ago: '2ms', accent: '#14B8A6', glyph: '✦' },
-  { platform: 'video-stream.io', card: 'Video & Music', note: '1s stream', amount: '0.0003', ago: '1s', accent: '#2775CA', glyph: '▶' },
-  { platform: 'data-query.app', card: 'Geo & Lookups', note: 'query', amount: '0.0012', ago: '1s', accent: '#6366F1', glyph: '≡' },
-  { platform: 'render-farm.cloud', card: 'Image Gen', note: 'render', amount: '0.0021', ago: '3s', accent: '#14B8A6', glyph: '✦' },
-  { platform: 'audio-cast.fm', card: 'Video & Music', note: '1s stream', amount: '0.0003', ago: '4s', accent: '#2775CA', glyph: '▶' },
-  { platform: 'geo-lookup.api', card: 'Geo & Lookups', note: 'lookup', amount: '0.0001', ago: '6s', accent: '#6366F1', glyph: '≡' },
-];
+const FALLBACK_GROUP: Group = { id: '', userId: '', name: 'Ungrouped', accent: '#8194AC', glyph: '◇', createdAt: '' };
 
 function hexA(hex: string, a: number) {
   const n = parseInt(hex.slice(1), 16);
@@ -92,15 +68,55 @@ function fmt(n: number | string) {
 function stop(e: React.MouseEvent) {
   e.stopPropagation();
 }
+function greeting() {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 18) return 'Good afternoon';
+  return 'Good evening';
+}
+function timeAgo(iso?: string) {
+  if (!iso) return '';
+  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+function isOutbound(tx: CircleTransaction) {
+  return tx.transactionType?.toUpperCase() === 'OUTBOUND';
+}
+function spendAmount(tx: CircleTransaction): number {
+  return Math.abs(Number(tx.amounts?.[0])) || 0;
+}
+function isSameUtcMonth(iso: string | undefined, ref: Date) {
+  if (!iso) return false;
+  const d = new Date(iso);
+  return d.getUTCFullYear() === ref.getUTCFullYear() && d.getUTCMonth() === ref.getUTCMonth();
+}
+function isSameUtcDay(iso: string | undefined, ref: Date) {
+  if (!iso) return false;
+  return isSameUtcMonth(iso, ref) && new Date(iso).getUTCDate() === ref.getUTCDate();
+}
+/** Merges a card doc with its spendable Gateway balance and this-month spend derived from wallet activity. */
+function withStats(card: Card, gatewayBalance: number, transactions: CircleTransaction[]): CardWithStats {
+  const now = new Date();
+  const spentThisMonth = transactions
+    .filter((t) => t.walletId === card.circleWalletId && isOutbound(t) && isSameUtcMonth(t.createDate, now))
+    .reduce((sum, t) => sum + spendAmount(t), 0);
+  return { ...card, balance: gatewayBalance, spentThisMonth };
+}
 
 /* ─────────────────────────────────────────────────────────────────
    Rules drawer
 ───────────────────────────────────────────────────────────────── */
 function RulesDrawer({
-  card, group, onClose, onMonthly, onPerCharge, onDaily, onVelocity, onToggle, onRemovePlatform, onToggleFreeze,
+  card, group, active, onClose, onMonthly, onPerCharge, onDaily, onVelocity, onToggle, onRemovePlatform, onToggleFreeze, onWithdraw, onCloseCard,
 }: {
-  card: CardT;
-  group: GroupT;
+  card: CardWithStats;
+  group: Group;
+  active: boolean;
   onClose: () => void;
   onMonthly: (v: number) => void;
   onPerCharge: (v: string) => void;
@@ -109,8 +125,44 @@ function RulesDrawer({
   onToggle: (key: 'autopause' | 'approve') => void;
   onRemovePlatform: (i: number) => void;
   onToggleFreeze: () => void;
+  onWithdraw: (amount: number) => Promise<void>;
+  onCloseCard: () => Promise<void>;
 }) {
   const r = card.rules;
+  const [withdrawAmount, setWithdrawAmount] = useState('');
+  const [withdrawing, setWithdrawing] = useState(false);
+  const [withdrawError, setWithdrawError] = useState<string | null>(null);
+  const withdrawAmt = Number(withdrawAmount) || 0;
+  const withdrawBlocked = !withdrawAmt || withdrawAmt > card.balance || withdrawing;
+  const [closing, setClosing] = useState(false);
+  const [closeError, setCloseError] = useState<string | null>(null);
+
+  async function handleWithdraw() {
+    if (withdrawBlocked) return;
+    setWithdrawing(true);
+    setWithdrawError(null);
+    try {
+      await onWithdraw(withdrawAmt);
+      setWithdrawAmount('');
+    } catch (err) {
+      setWithdrawError(getErrorMessage(err));
+    } finally {
+      setWithdrawing(false);
+    }
+  }
+
+  async function handleCloseCard() {
+    if (closing) return;
+    if (!window.confirm(`Close "${card.name}"? This permanently deletes the card and can't be undone.`)) return;
+    setClosing(true);
+    setCloseError(null);
+    try {
+      await onCloseCard();
+    } catch (err) {
+      setCloseError(getErrorMessage(err));
+      setClosing(false);
+    }
+  }
   const toggles: { key: 'autopause' | 'approve'; label: string; desc: string }[] = [
     { key: 'autopause', label: 'Auto-pause at limit', desc: 'Stop charges when the monthly cap is hit' },
     { key: 'approve', label: 'Require approval', desc: 'Notify me before charges over the per-charge cap' },
@@ -134,9 +186,77 @@ function RulesDrawer({
                 <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: '-0.01em' }}>{card.name}</div>
                 <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12, color: '#9fb3cc', marginTop: 3 }}>&bull;&bull;&bull;&bull; {card.last4} &middot; {group.name}</div>
               </div>
-              <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10.5, fontWeight: 700, color: r.frozen ? '#9fb3cc' : '#3ddc97', background: r.frozen ? 'rgba(129,148,172,0.2)' : 'rgba(61,220,151,0.18)', borderRadius: 999, padding: '4px 9px' }}>{r.frozen ? 'Frozen' : 'Active'}</span>
+              <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10.5, fontWeight: 700, color: active ? '#3ddc97' : '#9fb3cc', background: active ? 'rgba(61,220,151,0.18)' : 'rgba(129,148,172,0.2)', borderRadius: 999, padding: '4px 9px' }}>{active ? 'Active' : 'Frozen'}</span>
             </div>
             <div style={{ position: 'relative', fontFamily: "'JetBrains Mono',monospace", fontSize: 21, fontWeight: 700, marginTop: 18 }}>${fmt(card.balance)} <span style={{ fontSize: 12, color: '#6cb0f5' }}>USDC</span></div>
+          </div>
+
+          {/* wallet address */}
+          <div style={{ marginTop: 14, background: '#fff', border: '1px solid rgba(11,27,51,0.08)', borderRadius: 14, padding: '14px 17px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>Wallet Address</div>
+                <div style={{ fontSize: 12, color: '#8194AC', marginTop: 1 }}>This card&apos;s wallet on Base</div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 11, padding: '9px 11px', background: '#F1F5FA', border: '1px solid rgba(11,27,51,0.08)', borderRadius: 9 }}>
+              <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 13, fontWeight: 500, color: '#42546E', flex: 1, wordBreak: 'break-all' }}>
+                {card.walletAddress}
+              </div>
+              <button 
+                onClick={() => {
+                  navigator.clipboard.writeText(card.walletAddress);
+                  // Could add a toast notification here
+                }}
+                style={{ 
+                  fontFamily: 'inherit', 
+                  background: 'none', 
+                  border: 'none', 
+                  cursor: 'pointer', 
+                  padding: '4px 6px', 
+                  color: '#2775CA', 
+                  borderRadius: 6,
+                  fontSize: 16,
+                  lineHeight: 1,
+                  transition: 'background .2s'
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(39,117,202,0.1)'}
+                onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+                title="Copy wallet address"
+              >
+                📋
+              </button>
+            </div>
+          </div>
+
+          {/* withdraw to wallet */}
+          <div style={{ marginTop: 14, background: '#fff', border: '1px solid rgba(11,27,51,0.08)', borderRadius: 14, padding: '14px 17px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>Withdraw to wallet</div>
+                <div style={{ fontSize: 12, color: '#8194AC', marginTop: 1 }}>Moves USDC out of your spendable balance, back to this card&apos;s wallet address</div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 11 }}>
+              <div style={{ position: 'relative', flex: 1 }}>
+                <span style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', fontFamily: "'JetBrains Mono',monospace", fontSize: 13, color: '#8194AC' }}>$</span>
+                <input
+                  className="db-fld"
+                  value={withdrawAmount}
+                  onChange={(e) => setWithdrawAmount(e.target.value.replace(/[^0-9.]/g, ''))}
+                  disabled={withdrawing}
+                  placeholder="0.00"
+                  style={{ fontFamily: "'JetBrains Mono',monospace", width: '100%', padding: '9px 10px 9px 22px', fontSize: 13.5, fontWeight: 600, borderRadius: 9, border: '1.5px solid rgba(11,27,51,0.15)', background: '#fff' }}
+                />
+              </div>
+              <button onClick={handleWithdraw} disabled={withdrawBlocked} style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 700, color: '#fff', background: withdrawBlocked ? '#9db8d6' : '#2775CA', border: 'none', borderRadius: 9, cursor: withdrawBlocked ? 'not-allowed' : 'pointer', padding: '9px 16px', whiteSpace: 'nowrap' }}>
+                {withdrawing ? 'Withdrawing…' : 'Withdraw'}
+              </button>
+            </div>
+            {withdrawAmt > card.balance && (
+              <p style={{ fontSize: 12, color: '#C53030', margin: '8px 0 0' }}>Exceeds your ${fmt(card.balance)} available balance.</p>
+            )}
+            {withdrawError && <p style={{ fontSize: 12, color: '#C53030', margin: '8px 0 0' }}>{withdrawError}</p>}
           </div>
 
           {/* spending limits */}
@@ -202,9 +322,17 @@ function RulesDrawer({
 
           {/* danger zone */}
           <div style={{ display: 'flex', gap: 11, marginTop: 24 }}>
-            <button onClick={onToggleFreeze} style={{ fontFamily: 'inherit', flex: 1, fontSize: 14, fontWeight: 700, borderRadius: 12, cursor: 'pointer', padding: 13, border: `1.5px solid ${r.frozen ? 'rgba(39,117,202,0.3)' : 'rgba(11,27,51,0.15)'}`, background: r.frozen ? '#EAF2FC' : '#fff', color: r.frozen ? '#1B5FA8' : '#42546E', transition: 'all .2s' }}>{r.frozen ? 'Unfreeze card' : 'Freeze card'}</button>
-            <button className="db-close-card" style={{ fontFamily: 'inherit', fontSize: 14, fontWeight: 700, borderRadius: 12, cursor: 'pointer', padding: '13px 18px', border: '1.5px solid rgba(219,74,74,0.3)', background: '#fff', color: '#C53030', transition: 'all .2s' }}>Close card</button>
+            <button onClick={onToggleFreeze} style={{ fontFamily: 'inherit', flex: 1, fontSize: 14, fontWeight: 700, borderRadius: 12, cursor: 'pointer', padding: 13, border: `1.5px solid ${!active ? 'rgba(39,117,202,0.3)' : 'rgba(11,27,51,0.15)'}`, background: !active ? '#EAF2FC' : '#fff', color: !active ? '#1B5FA8' : '#42546E', transition: 'all .2s' }}>{active ? 'Freeze card' : 'Unfreeze card'}</button>
+            <button
+              className="db-close-card"
+              onClick={handleCloseCard}
+              disabled={closing}
+              style={{ fontFamily: 'inherit', fontSize: 14, fontWeight: 700, borderRadius: 12, cursor: closing ? 'not-allowed' : 'pointer', padding: '13px 18px', border: '1.5px solid rgba(219,74,74,0.3)', background: '#fff', color: '#C53030', transition: 'all .2s', opacity: closing ? 0.6 : 1 }}
+            >
+              {closing ? 'Closing…' : 'Close card'}
+            </button>
           </div>
+          {closeError && <p style={{ fontSize: 12, color: '#C53030', margin: '8px 0 0' }}>{closeError}</p>}
           <div style={{ height: 8 }} />
         </div>
       </div>
@@ -216,18 +344,20 @@ function RulesDrawer({
    New card modal
 ───────────────────────────────────────────────────────────────── */
 function NewCardModal({
-  groups, draft, onClose, onNameChange, onPickGroup, onPickLimit, onPickAccent, onCreate,
+  groups, draft, creating, error, onClose, onNameChange, onPickGroup, onPickLimit, onPickAccent, onCreate,
 }: {
-  groups: GroupT[];
+  groups: Group[];
   draft: Draft;
+  creating: boolean;
+  error: string | null;
   onClose: () => void;
   onNameChange: (v: string) => void;
-  onPickGroup: (g: GroupT) => void;
+  onPickGroup: (g: Group) => void;
   onPickLimit: (v: number) => void;
   onPickAccent: (v: string) => void;
   onCreate: () => void;
 }) {
-  const blocked = draft.name.trim().length < 2;
+  const blocked = draft.name.trim().length < 2 || !draft.groupId || creating;
   const nameDisplay = draft.name.trim() ? draft.name.trim().toUpperCase() : 'CARD NAME';
 
   return (
@@ -284,6 +414,9 @@ function NewCardModal({
               );
             })}
           </div>
+          {groups.length === 0 && (
+            <p style={{ fontSize: 12.5, color: '#8194AC', margin: '7px 0 0' }}>Create a group first to assign this card.</p>
+          )}
 
           <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#42546E', margin: '18px 0 7px' }}>Monthly cap</label>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8 }}>
@@ -305,7 +438,8 @@ function NewCardModal({
             })}
           </div>
 
-          <button className="db-primary-btn" onClick={onCreate} disabled={blocked} style={{ fontFamily: 'inherit', width: '100%', marginTop: 26, fontSize: 15, fontWeight: 700, color: '#fff', background: blocked ? '#9db8d6' : '#2775CA', border: 'none', borderRadius: 12, cursor: blocked ? 'not-allowed' : 'pointer', padding: 14, boxShadow: '0 10px 26px rgba(39,117,202,0.3)', transition: 'transform .2s' }}>Create card</button>
+          {error && <p style={{ fontSize: 12.5, color: '#C53030', lineHeight: 1.5, margin: '14px 0 0' }}>{error}</p>}
+          <button className="db-primary-btn" onClick={onCreate} disabled={blocked} style={{ fontFamily: 'inherit', width: '100%', marginTop: 26, fontSize: 15, fontWeight: 700, color: '#fff', background: blocked ? '#9db8d6' : '#2775CA', border: 'none', borderRadius: 12, cursor: blocked ? 'not-allowed' : 'pointer', padding: 14, boxShadow: '0 10px 26px rgba(39,117,202,0.3)', transition: 'transform .2s' }}>{creating ? 'Creating…' : 'Create card'}</button>
         </div>
       </div>
     </div>
@@ -316,15 +450,17 @@ function NewCardModal({
    New group modal
 ───────────────────────────────────────────────────────────────── */
 function NewGroupModal({
-  draft, onClose, onNameChange, onPickGlyph, onCreate,
+  draft, creating, error, onClose, onNameChange, onPickGlyph, onCreate,
 }: {
   draft: GroupDraft;
+  creating: boolean;
+  error: string | null;
   onClose: () => void;
   onNameChange: (v: string) => void;
   onPickGlyph: (gc: { glyph: string; accent: string }) => void;
   onCreate: () => void;
 }) {
-  const blocked = draft.name.trim().length < 2;
+  const blocked = draft.name.trim().length < 2 || creating;
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 70, background: 'rgba(11,27,51,0.5)', backdropFilter: 'blur(3px)', animation: 'db-fade .25s ease', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
@@ -350,7 +486,8 @@ function NewGroupModal({
           </div>
         </div>
 
-        <button className="db-primary-btn" onClick={onCreate} disabled={blocked} style={{ fontFamily: 'inherit', width: '100%', marginTop: 24, fontSize: 15, fontWeight: 700, color: '#fff', background: blocked ? '#9db8d6' : '#2775CA', border: 'none', borderRadius: 12, cursor: blocked ? 'not-allowed' : 'pointer', padding: 14, boxShadow: '0 10px 26px rgba(39,117,202,0.3)', transition: 'transform .2s' }}>Create group</button>
+        {error && <p style={{ fontSize: 12.5, color: '#C53030', lineHeight: 1.5, margin: '14px 0 0' }}>{error}</p>}
+        <button className="db-primary-btn" onClick={onCreate} disabled={blocked} style={{ fontFamily: 'inherit', width: '100%', marginTop: 24, fontSize: 15, fontWeight: 700, color: '#fff', background: blocked ? '#9db8d6' : '#2775CA', border: 'none', borderRadius: 12, cursor: blocked ? 'not-allowed' : 'pointer', padding: 14, boxShadow: '0 10px 26px rgba(39,117,202,0.3)', transition: 'transform .2s' }}>{creating ? 'Creating…' : 'Create group'}</button>
       </div>
     </div>
   );
@@ -360,63 +497,224 @@ function NewGroupModal({
    Dashboard
 ───────────────────────────────────────────────────────────────── */
 export default function Dashboard() {
-  const [groups, setGroups] = useState<GroupT[]>(INITIAL_GROUPS);
-  const [cards, setCards] = useState<CardT[]>(INITIAL_CARDS);
+  const router = useRouter();
+  const { user: authUser, loading: authLoading } = useAuthUser();
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
+
+  const [profile, setProfile] = useState<User | null>(null);
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [cards, setCards] = useState<CardWithStats[]>([]);
+  const [activity, setActivity] = useState<CircleTransaction[]>([]);
+  const [loadingData, setLoadingData] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [activityPaused, setActivityPaused] = useState(false);
+  const [activityError, setActivityError] = useState<string | null>(null);
+
   const [drawerId, setDrawerId] = useState<string | null>(null);
   const [newOpen, setNewOpen] = useState(false);
   const [groupOpen, setGroupOpen] = useState(false);
-  const [draft, setDraft] = useState<Draft>({ name: '', groupId: 'streaming', limit: 80, accent: '#2775CA' });
+  const [draft, setDraft] = useState<Draft>({ name: '', groupId: '', limit: 80, accent: '#2775CA' });
   const [groupDraft, setGroupDraft] = useState<GroupDraft>({ name: '', glyph: '◆', accent: '#2775CA' });
+  const [creatingCard, setCreatingCard] = useState(false);
+  const [createCardError, setCreateCardError] = useState<string | null>(null);
+  const [creatingGroup, setCreatingGroup] = useState(false);
+  const [createGroupError, setCreateGroupError] = useState<string | null>(null);
 
-  const groupById = (id: string) => groups.find((g) => g.id === id) || groups[0];
+  const rulesPending = useRef<Record<string, Partial<CardRules>>>({});
+  const rulesTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  useEffect(() => () => {
+    Object.values(rulesTimers.current).forEach(clearTimeout);
+  }, []);
 
-  function setRule<K extends keyof Rules>(id: string, key: K, val: Rules[K]) {
+  /* ── load user, groups, cards + live Circle balances/activity ────── */
+  useEffect(() => {
+    if (authLoading) return;
+    if (!authUser) {
+      router.replace('/onboarding');
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setLoadingData(true);
+      setLoadError(null);
+      try {
+        const [me, groupList, cardList] = await Promise.all([getMyProfile(), listGroups(), listCards()]);
+        if (cancelled) return;
+        const [balances, activityResult] = await Promise.all([
+          Promise.all(cardList.map((c) => getCardBalance(c.id).catch(() => ({ gatewayBalance: c.gatewayBalance ?? 0, tokenBalances: [] })))),
+          getMyActivity().catch(() => ({ transactions: [] as CircleTransaction[] })),
+        ]);
+        if (cancelled) return;
+        setProfile(me);
+        setGroups(groupList);
+        setCards(cardList.map((c, i) => withStats(c, balances[i].gatewayBalance, activityResult.transactions)));
+        setActivity(activityResult.transactions);
+      } catch (err) {
+        if (!cancelled) setLoadError(getErrorMessage(err));
+      } finally {
+        if (!cancelled) setLoadingData(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [authLoading, authUser, router, reloadToken]);
+
+  /** Re-pulls Circle wallet activity and recomputes each card's spentThisMonth against it — cheap (one call, not per-card) so it's safe to poll. */
+  const refreshActivity = useCallback(() => {
+    return getMyActivity()
+      .then(({ transactions }) => {
+        if (!mountedRef.current) return;
+        setActivity(transactions);
+        setCards((cs) => cs.map((c) => withStats(c, c.balance, transactions)));
+        setActivityError(null);
+      })
+      .catch((err) => {
+        if (mountedRef.current) setActivityError(getErrorMessage(err));
+      });
+  }, []);
+
+  // Lightweight polling instead of a websocket/SSE stream — same tradeoff as DeveloperDashboard's request
+  // log. Gated on loadingData so it doesn't race the initial load's own activity fetch.
+  useEffect(() => {
+    if (loadingData || activityPaused) return;
+    const interval = setInterval(refreshActivity, ACTIVITY_POLL_MS);
+    return () => clearInterval(interval);
+  }, [loadingData, activityPaused, refreshActivity]);
+
+  const groupById = useCallback((id: string) => groups.find((g) => g.id === id) ?? FALLBACK_GROUP, [groups]);
+  const cardByWallet = useMemo(() => new Map(cards.map((c) => [c.circleWalletId, c])), [cards]);
+
+  /** Updates a rule locally for instant feedback, then persists a debounced patch to the backend. */
+  function setRule<K extends keyof CardRules>(id: string, key: K, val: CardRules[K]) {
     setCards((cs) => cs.map((c) => (c.id === id ? { ...c, rules: { ...c.rules, [key]: val } } : c)));
+    rulesPending.current[id] = { ...(rulesPending.current[id] ?? {}), [key]: val };
+    clearTimeout(rulesTimers.current[id]);
+    rulesTimers.current[id] = setTimeout(() => {
+      const patch = rulesPending.current[id];
+      delete rulesPending.current[id];
+      if (!patch) return;
+      updateCardRules(id, patch).catch((err) => {
+        if (mountedRef.current) setActionError(getErrorMessage(err));
+      });
+    }, 500);
   }
 
+  const toggleFreeze = useCallback(async (card: CardWithStats) => {
+    const next = !card.active;
+    setCards((cs) => cs.map((c) => (c.id === card.id ? { ...c, active: next } : c)));
+    try {
+      await setCardActive(card.id, next);
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setCards((cs) => cs.map((c) => (c.id === card.id ? { ...c, active: card.active } : c)));
+      setActionError(getErrorMessage(err));
+    }
+  }, []);
+
+  /** Errors are left to the caller (RulesDrawer shows them inline) rather than the global banner — this moves money, so it needs its own visible feedback right next to the amount the user typed. */
+  const withdrawCard = useCallback(async (cardId: string, amount: number) => {
+    const { gatewayBalance } = await withdrawCardBalance(cardId, amount);
+    if (mountedRef.current) {
+      setCards((cs) => cs.map((c) => (c.id === cardId ? { ...c, balance: gatewayBalance } : c)));
+    }
+  }, []);
+
+  /** Error left to the caller (RulesDrawer shows it inline) — the backend rejects this with a 409 if the card still has a spendable balance, same reasoning as withdraw above. */
+  const closeCard = useCallback(async (cardId: string) => {
+    await deleteCard(cardId);
+    if (mountedRef.current) {
+      setCards((cs) => cs.filter((c) => c.id !== cardId));
+      setDrawerId((id) => (id === cardId ? null : id));
+    }
+  }, []);
+
   const openNewCard = (groupId?: string, accent?: string) => {
-    setDraft({ name: '', groupId: groupId ?? 'streaming', limit: 80, accent: accent ?? '#2775CA' });
+    const gid = groupId ?? groups[0]?.id ?? '';
+    const acc = accent ?? groups.find((g) => g.id === gid)?.accent ?? '#2775CA';
+    setDraft({ name: '', groupId: gid, limit: 80, accent: acc });
+    setCreateCardError(null);
     setNewOpen(true);
   };
 
-  const onPickGroup = (g: GroupT) => {
+  const onPickGroup = (g: Group) => {
     setDraft((d) => {
       const prevAccent = groupById(d.groupId).accent;
       return { ...d, groupId: g.id, accent: d.accent === prevAccent ? g.accent : d.accent };
     });
   };
 
-  const createCard = () => {
-    if (draft.name.trim().length < 2) return;
-    const id = 'c' + Date.now();
-    const last4 = String(1000 + Math.floor(Math.random() * 8999));
-    const card: CardT = {
-      id, groupId: draft.groupId, name: draft.name.trim(), last4, balance: 0, spent: 0,
-      rules: { monthly: draft.limit, perCharge: '2.00', daily: String(Math.round(draft.limit / 8)) + '.00', velocity: '25', autopause: true, approve: false, frozen: false, platforms: [] },
-    };
-    setCards((cs) => [...cs, card]);
-    setNewOpen(false);
-    setDrawerId(id);
-  };
+  const createCard = useCallback(async () => {
+    if (draft.name.trim().length < 2 || !draft.groupId || creatingCard) return;
+    setCreatingCard(true);
+    setCreateCardError(null);
+    try {
+      const created = await apiCreateCard({ name: draft.name.trim(), groupId: draft.groupId, monthly: draft.limit });
+      const { gatewayBalance } = await getCardBalance(created.id).catch(() => ({ gatewayBalance: created.gatewayBalance ?? 0, tokenBalances: [] }));
+      if (!mountedRef.current) return;
+      setCards((cs) => [...cs, withStats(created, gatewayBalance, [])]);
+      setNewOpen(false);
+      setDrawerId(created.id);
+    } catch (err) {
+      if (mountedRef.current) setCreateCardError(getErrorMessage(err));
+    } finally {
+      if (mountedRef.current) setCreatingCard(false);
+    }
+  }, [draft, creatingCard]);
 
-  const createGroup = () => {
-    if (groupDraft.name.trim().length < 2) return;
-    const id = 'g' + Date.now();
-    setGroups((gs) => [...gs, { id, name: groupDraft.name.trim(), accent: groupDraft.accent, glyph: groupDraft.glyph }]);
-    setGroupOpen(false);
-  };
+  const createGroup = useCallback(async () => {
+    if (groupDraft.name.trim().length < 2 || creatingGroup) return;
+    setCreatingGroup(true);
+    setCreateGroupError(null);
+    try {
+      const created = await apiCreateGroup({ name: groupDraft.name.trim(), accent: groupDraft.accent, glyph: groupDraft.glyph });
+      if (!mountedRef.current) return;
+      setGroups((gs) => [...gs, created]);
+      setGroupOpen(false);
+    } catch (err) {
+      if (mountedRef.current) setCreateGroupError(getErrorMessage(err));
+    } finally {
+      if (mountedRef.current) setCreatingGroup(false);
+    }
+  }, [groupDraft, creatingGroup]);
 
   const totalBalance = cards.reduce((a, c) => a + c.balance, 0);
-  const monthlySpend = cards.reduce((a, c) => a + c.spent, 0);
-  const activeCount = cards.filter((c) => !c.rules.frozen).length;
+  const monthlySpend = cards.reduce((a, c) => a + c.spentThisMonth, 0);
+  const activeCount = cards.filter((c) => c.active).length;
+  const chargesToday = useMemo(() => {
+    const now = new Date();
+    return activity.filter((t) => isOutbound(t) && isSameUtcDay(t.createDate, now)).length;
+  }, [activity]);
   const drawerCard = cards.find((c) => c.id === drawerId) || null;
+  const recentActivity = useMemo(
+    () => [...activity].sort((a, b) => (b.createDate ?? '').localeCompare(a.createDate ?? '')).slice(0, 8),
+    [activity],
+  );
 
   const stats = [
     { label: 'Total balance', value: '$' + fmt(totalBalance), delta: 'USDC', deltaColor: '#1B5FA8', deltaBg: '#EAF2FC' },
-    { label: 'Spent this month', value: '$' + fmt(monthlySpend), delta: '+12%', deltaColor: '#C53030', deltaBg: '#FDECEC' },
+    { label: 'Spent this month', value: '$' + fmt(monthlySpend), delta: 'live', deltaColor: '#1B7A4B', deltaBg: 'rgba(61,220,151,0.16)' },
     { label: 'Active cards', value: `${activeCount}/${cards.length}`, delta: 'live', deltaColor: '#1B7A4B', deltaBg: 'rgba(61,220,151,0.16)' },
-    { label: 'Charges today', value: '3,418', delta: '+5%', deltaColor: '#1B7A4B', deltaBg: 'rgba(61,220,151,0.16)' },
+    { label: 'Charges today', value: String(chargesToday), delta: 'live', deltaColor: '#1B7A4B', deltaBg: 'rgba(61,220,151,0.16)' },
   ];
+
+  const firstName = profile?.name.trim().split(/\s+/)[0] || 'there';
+
+  if (authLoading || !authUser || (loadingData && !profile)) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Hanken Grotesk',sans-serif", color: '#42546E' }}>
+        {loadError ? (
+          <div style={{ textAlign: 'center' }}>
+            <p style={{ marginBottom: 14 }}>{loadError}</p>
+            <button onClick={() => setReloadToken((t) => t + 1)} style={{ fontFamily: 'inherit', fontWeight: 700, color: '#fff', background: '#2775CA', border: 'none', borderRadius: 10, padding: '10px 18px', cursor: 'pointer' }}>Retry</button>
+          </div>
+        ) : (
+          <div>Loading your dashboard…</div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div style={{ fontFamily: "'Hanken Grotesk',sans-serif", color: '#0B1B33', background: '#F4F7FB', WebkitFontSmoothing: 'antialiased' }}>
@@ -442,10 +740,10 @@ export default function Dashboard() {
 
           <div className="db-side-foot" style={{ marginTop: 'auto' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 4px' }}>
-              <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'linear-gradient(135deg,#2775CA,#1B5FA8)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 14 }}>A</div>
+              <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'linear-gradient(135deg,#2775CA,#1B5FA8)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 14 }}>{firstName[0]?.toUpperCase() ?? '?'}</div>
               <div style={{ lineHeight: 1.25 }}>
-                <div style={{ fontSize: 13.5, fontWeight: 700 }}>Ada Lovelace</div>
-                <div style={{ fontSize: 11.5, color: '#8194AC' }}>ada@xanpay.com</div>
+                <div style={{ fontSize: 13.5, fontWeight: 700 }}>{profile?.name ?? '…'}</div>
+                <div style={{ fontSize: 11.5, color: '#8194AC' }}>{profile?.email ?? ''}</div>
               </div>
             </div>
           </div>
@@ -455,11 +753,18 @@ export default function Dashboard() {
         <main className="db-scroll" style={{ overflowY: 'auto', maxHeight: '100vh' }}>
           <div className="db-main-pad">
 
+            {actionError && (
+              <div style={{ marginBottom: 20, padding: '11px 16px', borderRadius: 11, background: '#FDECEC', color: '#C53030', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                <span>{actionError}</span>
+                <span onClick={() => setActionError(null)} style={{ cursor: 'pointer', fontWeight: 700, fontSize: 15, lineHeight: 1 }}>&times;</span>
+              </div>
+            )}
+
             {/* topbar */}
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 20, flexWrap: 'wrap', marginBottom: 26 }}>
               <div>
                 <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#2775CA', fontWeight: 600 }}>Overview</div>
-                <h1 style={{ fontSize: 30, fontWeight: 800, letterSpacing: '-0.03em', margin: '7px 0 0' }}>Good morning, Ada</h1>
+                <h1 style={{ fontSize: 30, fontWeight: 800, letterSpacing: '-0.03em', margin: '7px 0 0' }}>{greeting()}, {firstName}</h1>
                 <div style={{ marginTop: 14, display: 'inline-block', minWidth: 200, background: 'linear-gradient(140deg,#0B1B33,#11305a)', borderRadius: 14, padding: 16, color: '#fff', position: 'relative', overflow: 'hidden' }}>
                   <div style={{ position: 'absolute', top: -40, right: -30, width: 140, height: 140, borderRadius: '50%', background: 'radial-gradient(circle,rgba(39,117,202,0.4),transparent 70%)' }} />
                   <div style={{ position: 'relative' }}>
@@ -470,8 +775,8 @@ export default function Dashboard() {
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 11 }}>
-                <button className="db-outline-btn" onClick={() => setGroupOpen(true)} style={{ fontFamily: 'inherit', fontSize: 14, fontWeight: 600, color: '#0B1B33', background: '#fff', border: '1.5px solid rgba(11,27,51,0.15)', borderRadius: 11, cursor: 'pointer', padding: '11px 17px', transition: 'border-color .2s, transform .2s' }}>+ New group</button>
-                <button className="db-primary-btn" onClick={() => openNewCard()} style={{ fontFamily: 'inherit', fontSize: 14, fontWeight: 700, color: '#fff', background: '#2775CA', border: 'none', borderRadius: 11, cursor: 'pointer', padding: '11px 18px', boxShadow: '0 8px 22px rgba(39,117,202,0.3)', transition: 'transform .2s' }}>+ New card</button>
+                <button className="db-outline-btn" onClick={() => { setCreateGroupError(null); setGroupOpen(true); }} style={{ fontFamily: 'inherit', fontSize: 14, fontWeight: 600, color: '#0B1B33', background: '#fff', border: '1.5px solid rgba(11,27,51,0.15)', borderRadius: 11, cursor: 'pointer', padding: '11px 17px', transition: 'border-color .2s, transform .2s' }}>+ New group</button>
+                <button className="db-primary-btn" onClick={() => openNewCard()} disabled={groups.length === 0} style={{ fontFamily: 'inherit', fontSize: 14, fontWeight: 700, color: '#fff', background: groups.length === 0 ? '#9db8d6' : '#2775CA', border: 'none', borderRadius: 11, cursor: groups.length === 0 ? 'not-allowed' : 'pointer', padding: '11px 18px', boxShadow: '0 8px 22px rgba(39,117,202,0.3)', transition: 'transform .2s' }}>+ New card</button>
               </div>
             </div>
 
@@ -491,6 +796,11 @@ export default function Dashboard() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 30 }}>
               {/* grouped cards */}
               <div>
+                {groups.length === 0 && (
+                  <div style={{ background: '#fff', border: '1.5px dashed rgba(11,27,51,0.15)', borderRadius: 16, padding: '28px 20px', textAlign: 'center', color: '#5B6B82', fontSize: 14, marginBottom: 20 }}>
+                    No groups yet — create one to start organizing your cards.
+                  </div>
+                )}
                 {groups.map((g) => {
                   const groupCards = cards.filter((c) => c.groupId === g.id);
                   const total = groupCards.reduce((a, c) => a + c.balance, 0);
@@ -505,8 +815,8 @@ export default function Dashboard() {
                       </div>
                       <div className="db-cardgrid">
                         {groupCards.map((c) => {
-                          const pct = Math.min(100, Math.round((c.spent / c.rules.monthly) * 100));
-                          const frozen = c.rules.frozen;
+                          const pct = c.rules.monthly > 0 ? Math.min(100, Math.round((c.spentThisMonth / c.rules.monthly) * 100)) : 0;
+                          const frozen = !c.active;
                           const near = pct >= 85;
                           return (
                             <div key={c.id} className="db-card-tile" onClick={() => setDrawerId(c.id)} style={{ position: 'relative', borderRadius: 18, padding: 18, cursor: 'pointer', background: 'linear-gradient(140deg,rgba(255,255,255,0.9),rgba(231,240,250,0.7))', border: '1px solid rgba(255,255,255,0.9)', boxShadow: '0 10px 26px rgba(15,45,82,0.07)', overflow: 'hidden', transition: 'transform .22s cubic-bezier(.2,.7,.3,1), box-shadow .22s' }}>
@@ -525,7 +835,7 @@ export default function Dashboard() {
                                 <div style={{ marginTop: 20 }}>
                                   <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
                                     <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: '#8194AC' }}>SPENT THIS MONTH</span>
-                                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12, fontWeight: 600, color: '#42546E' }}>${fmt(c.spent)} / ${fmt(c.rules.monthly)}</span>
+                                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12, fontWeight: 600, color: '#42546E' }}>${fmt(c.spentThisMonth)} / ${fmt(c.rules.monthly)}</span>
                                   </div>
                                   <div style={{ marginTop: 7, height: 7, borderRadius: 5, background: 'rgba(11,27,51,0.08)', overflow: 'hidden' }}>
                                     <div style={{ height: '100%', width: `${pct}%`, background: frozen ? '#8194AC' : near ? '#E0801B' : g.accent, borderRadius: 5, transition: 'width .4s ease' }} />
@@ -548,24 +858,38 @@ export default function Dashboard() {
               {/* activity */}
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 15 }}>
-                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#3ddc97', boxShadow: '0 0 9px #3ddc97', animation: 'db-fade 1.4s infinite alternate' }} />
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: activityPaused ? '#8194AC' : '#3ddc97', boxShadow: activityPaused ? 'none' : '0 0 9px #3ddc97', animation: activityPaused ? 'none' : 'dd-blink 1.3s infinite' }} />
                   <h2 style={{ fontSize: 18, fontWeight: 800, letterSpacing: '-0.02em', margin: 0 }}>Live activity</h2>
+                  <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11.5, color: '#8194AC' }}>{activityPaused ? 'paused' : `auto-refreshing · every ${ACTIVITY_POLL_MS / 1000}s`}</span>
+                  <div style={{ flex: 1 }} />
+                  <button onClick={() => setActivityPaused((p) => !p)} style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11.5, fontWeight: 700, color: '#42546E', background: '#F1F5FA', border: '1px solid rgba(11,27,51,0.1)', borderRadius: 8, cursor: 'pointer', padding: '6px 12px' }}>{activityPaused ? '▶ Resume' : '‖ Pause'}</button>
                 </div>
+                {activityError && <p style={{ fontSize: 12, color: '#C53030', margin: '0 0 11px' }}>{activityError}</p>}
                 <div style={{ background: '#fff', border: '1px solid rgba(11,27,51,0.08)', borderRadius: 16, overflow: 'hidden', boxShadow: '0 8px 22px rgba(15,45,82,0.04)' }}>
-                  {ACTIVITY.map((a, i) => (
-                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '13px 18px', borderBottom: '1px solid rgba(11,27,51,0.06)' }}>
-                      <div style={{ width: 34, height: 34, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, color: '#fff', background: a.accent, flexShrink: 0 }}>{a.glyph}</div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 13, fontWeight: 500, color: '#0B1B33', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.platform}</div>
-                        <div style={{ fontSize: 12, color: '#8194AC' }}>{a.card} &middot; {a.note}</div>
-                      </div>
-                      <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                        <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 13.5, fontWeight: 700, color: '#0B1B33' }}>-${a.amount}</div>
-                        <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: '#8194AC' }}>{a.ago}</div>
-                      </div>
-                    </div>
-                  ))}
-                  <div style={{ padding: '13px 18px', textAlign: 'center', fontSize: 13, fontWeight: 600, color: '#2775CA', cursor: 'pointer' }}>View all activity &rarr;</div>
+                  {recentActivity.length === 0 ? (
+                    <div style={{ padding: '24px 18px', textAlign: 'center', fontSize: 13, color: '#8194AC' }}>No activity yet — fund a card to see live charges here.</div>
+                  ) : (
+                    recentActivity.map((tx) => {
+                      const card = cardByWallet.get(tx.walletId);
+                      const group = card ? groupById(card.groupId) : null;
+                      const accent = group?.accent ?? '#8194AC';
+                      const glyph = group?.glyph ?? '◇';
+                      const outbound = isOutbound(tx);
+                      return (
+                        <div key={tx.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '13px 18px', borderBottom: '1px solid rgba(11,27,51,0.06)' }}>
+                          <div style={{ width: 34, height: 34, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, color: '#fff', background: accent, flexShrink: 0 }}>{glyph}</div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 13, fontWeight: 500, color: '#0B1B33', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{card?.name ?? 'Wallet'}</div>
+                            <div style={{ fontSize: 12, color: '#8194AC' }}>{(tx.transactionType ?? 'transaction').toLowerCase()} &middot; {(tx.state ?? '').toLowerCase()}</div>
+                          </div>
+                          <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                            <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 13.5, fontWeight: 700, color: '#0B1B33' }}>{outbound ? '-' : '+'}${fmt(spendAmount(tx))}</div>
+                            <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: '#8194AC' }}>{timeAgo(tx.createDate)}</div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
               </div>
             </div>
@@ -578,6 +902,7 @@ export default function Dashboard() {
         <RulesDrawer
           card={drawerCard}
           group={groupById(drawerCard.groupId)}
+          active={drawerCard.active}
           onClose={() => setDrawerId(null)}
           onMonthly={(v) => setRule(drawerCard.id, 'monthly', v)}
           onPerCharge={(v) => setRule(drawerCard.id, 'perCharge', v)}
@@ -585,7 +910,9 @@ export default function Dashboard() {
           onVelocity={(v) => setRule(drawerCard.id, 'velocity', v)}
           onToggle={(key) => setRule(drawerCard.id, key, !drawerCard.rules[key])}
           onRemovePlatform={(i) => setRule(drawerCard.id, 'platforms', drawerCard.rules.platforms.filter((_, j) => j !== i))}
-          onToggleFreeze={() => setRule(drawerCard.id, 'frozen', !drawerCard.rules.frozen)}
+          onToggleFreeze={() => toggleFreeze(drawerCard)}
+          onWithdraw={(amount) => withdrawCard(drawerCard.id, amount)}
+          onCloseCard={() => closeCard(drawerCard.id)}
         />
       )}
 
@@ -594,6 +921,8 @@ export default function Dashboard() {
         <NewCardModal
           groups={groups}
           draft={draft}
+          creating={creatingCard}
+          error={createCardError}
           onClose={() => setNewOpen(false)}
           onNameChange={(v) => setDraft((d) => ({ ...d, name: v }))}
           onPickGroup={onPickGroup}
@@ -607,6 +936,8 @@ export default function Dashboard() {
       {groupOpen && (
         <NewGroupModal
           draft={groupDraft}
+          creating={creatingGroup}
+          error={createGroupError}
           onClose={() => setGroupOpen(false)}
           onNameChange={(v) => setGroupDraft((d) => ({ ...d, name: v }))}
           onPickGlyph={(gc) => setGroupDraft((d) => ({ ...d, glyph: gc.glyph, accent: gc.accent }))}

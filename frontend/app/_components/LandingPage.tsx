@@ -119,7 +119,7 @@ export default function LandingPage() {
 
   /* ── Copy code ── */
   const copyCode = () => {
-    const code = `import { xanpay } from '@xanpay/sdk'\n\napp.use(xanpay.charge('/v1/infer', { price: '$0.0008' }))`;
+    const code = `import { xanpay } from '@xanpay/sdk'\n\napp.post('/v1/infer', xanpay.protect({ price: '$0.0008' }), handler)`;
     navigator.clipboard.writeText(code).catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 1800);
@@ -414,18 +414,20 @@ export default function LandingPage() {
                 {'\n\n'}
                 <span style={{ color: '#7aa2f7' }}>app</span>
                 <span style={{ color: '#e6edf3' }}>.</span>
-                <span style={{ color: '#7dcfff' }}>use</span>
-                <span style={{ color: '#e6edf3' }}>(</span>
-                <span style={{ color: '#7aa2f7' }}>xanpay</span>
-                <span style={{ color: '#e6edf3' }}>.</span>
-                <span style={{ color: '#7dcfff' }}>charge</span>
+                <span style={{ color: '#7dcfff' }}>post</span>
                 <span style={{ color: '#e6edf3' }}>(</span>
                 <span style={{ color: '#9ece6a' }}>{`'/v1/infer'`}</span>
-                <span style={{ color: '#e6edf3' }}>{', { '}</span>
+                <span style={{ color: '#e6edf3' }}>{', '}</span>
+                <span style={{ color: '#7aa2f7' }}>xanpay</span>
+                <span style={{ color: '#e6edf3' }}>.</span>
+                <span style={{ color: '#7dcfff' }}>protect</span>
+                <span style={{ color: '#e6edf3' }}>{'({ '}</span>
                 <span style={{ color: '#bb9af7' }}>price</span>
                 <span style={{ color: '#e6edf3' }}>: </span>
                 <span style={{ color: '#ff9e64' }}>{`'$0.0008'`}</span>
-                <span style={{ color: '#e6edf3' }}>{' }))' }</span>
+                <span style={{ color: '#e6edf3' }}>{' }), '}</span>
+                <span style={{ color: '#7aa2f7' }}>handler</span>
+                <span style={{ color: '#e6edf3' }}>)</span>
               </code>
             </pre>
           </div>
